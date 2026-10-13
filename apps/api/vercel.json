@@ -3,10 +3,13 @@
   "buildCommand": "pnpm turbo build --filter=@crm/api",
   "installCommand": "pnpm install",
   "framework": null,
-  "outputDirectory": "apps/api/dist",
+  "outputDirectory": "dist",
   "functions": {
     "api/index.ts": { "maxDuration": 300 }
   },
   "regions": ["gru1"],
-  "crons": [{ "path": "/api/cron/sync", "schedule": "0 3 * * *" }]
+  "crons": [
+    { "path": "/api/cron/sync", "schedule": "*/15 * * * *" },
+    { "path": "/api/cron/health", "schedule": "*/15 * * * *" }
+  ]
 }
