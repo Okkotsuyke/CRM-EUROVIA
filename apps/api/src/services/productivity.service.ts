@@ -2,6 +2,7 @@
  * Productivity service — Página 2: Produtividade por VL
  */
 import { PrismaClient, UserRole, LeadStatusNormalized, AppointmentStatus } from '@prisma/client';
+import { storeIdFilter } from './store-scope';
 
 type ProductivityFilters = {
   consultantId?: string;
@@ -12,7 +13,7 @@ type ProductivityFilters = {
   date?: string; // YYYY-MM-DD
 };
 
-type AuthUser = { id: string; role: string; storeId: string | null };
+type AuthUser = { id: string; role: UserRole; storeId: string | null };
 
 // ── Status normalizado mapping ─────────────────────────────
 // Estes status dependem dos dados reais do Syonet.
@@ -36,9 +37,10 @@ function normalizeStatus(s: string): LeadStatusNormalized {
 
 // ── Portfolio summary por VL ────────────────────────────────
 
-async function getPortfolioSummary(prisma: PrismaClient, userId: string, filters: ProductivityFilters) {
+async function getPortfolioSummary(prisma: PrismaClient, userId: string, filters: ProductivityFilters, user: AuthUser) {
   const where: any = {
     assignedVlId: userId,
+    storeId: storeIdFilter(user, filters.storeId ? [filters.storeId] : undefined),
   };
 
   if (filters.status?.length) {
@@ -58,7 +60,7 @@ async function getPortfolioSummary(prisma: PrismaClient, userId: string, filters
       prisma.lead.count({ where: { ...where, priorityFlag: true } }),
       // Trabalhados = snapshot mais recente
       prisma.productivitySnapshot.findFirst({
-        where: { userId },
+        where: { userId, storeId: storeIdFilter(user, filters.storeId ? [filters.storeId] : undefined) },
         orderBy: { periodEnd: 'desc' },
         select: { leadsXVendedorLoja: true, leadsXOperadorBdc: true },
       }),
@@ -78,9 +80,10 @@ async function getPortfolioSummary(prisma: PrismaClient, userId: string, filters
 
 // ── Leads da carteira ──────────────────────────────────────
 
-async function getPortfolioLeads(prisma: PrismaClient, userId: string, filters: ProductivityFilters) {
+async function getPortfolioLeads(prisma: PrismaClient, userId: string, filters: ProductivityFilters, user: AuthUser) {
   const where: any = {
     assignedVlId: userId,
+    storeId: storeIdFilter(user, filters.storeId ? [filters.storeId] : undefined),
   };
 
   if (filters.status?.length) {
@@ -108,6 +111,7 @@ async function getPortfolioLeads(prisma: PrismaClient, userId: string, filters: 
   const nextAppointments = await prisma.appointment.findMany({
     where: {
       leadId: { in: leadIds },
+      storeId: storeIdFilter(user, filters.storeId ? [filters.storeId] : undefined),
       appointmentDate: { gte: new Date() },
     },
     select: { leadId: true, appointmentDate: true },
@@ -132,20 +136,22 @@ async function getPortfolioLeads(prisma: PrismaClient, userId: string, filters: 
 
 // ── Agenda do dia ──────────────────────────────────────────
 
-async function getTodayAgenda(prisma: PrismaClient, userId: string, filters: ProductivityFilters) {
+async function getTodayAgenda(prisma: PrismaClient, userId: string, filters: ProductivityFilters, user: AuthUser) {
   const today = filters.date ? new Date(filters.date) : new Date();
   const startOfDay = new Date(today);
   startOfDay.setHours(0, 0, 0, 0);
   const endOfDay = new Date(today);
   endOfDay.setHours(23, 59, 59, 999);
 
-  const isRestricted = filters.consultantId && filters.consultantId !== userId;
+  const selectedConsultant = user.role === 'VL_CONSULTANT'
+    ? userId : filters.consultantId;
 
   const appointments = await prisma.appointment.findMany({
     where: {
       appointmentDate: { gte: startOfDay, lte: endOfDay },
       status: { notIn: [AppointmentStatus.CANCELLED] },
-      ...(isRestricted ? { createdByUserId: filters.consultantId } : {}),
+      storeId: storeIdFilter(user, filters.storeId ? [filters.storeId] : undefined),
+      ...(selectedConsultant ? { createdByUserId: selectedConsultant } : {}),
     },
     include: {
       lead: {
@@ -166,6 +172,7 @@ async function getTodayAgenda(prisma: PrismaClient, userId: string, filters: Pro
   const salesToday = await prisma.sale.findMany({
     where: {
       leadId: { in: leadIds },
+      storeId: storeIdFilter(user, filters.storeId ? [filters.storeId] : undefined),
       saleDate: { gte: startOfDay, lte: endOfDay },
     },
     select: { leadId: true },
@@ -173,13 +180,19 @@ async function getTodayAgenda(prisma: PrismaClient, userId: string, filters: Pro
   const salesSet = new Set(salesToday.map(s => s.leadId));
 
   const vlNames = await prisma.user.findMany({
-    where: { id: { in: appointments.map(a => a.lead.assignedVlId).filter(Boolean) as string[] } },
+    where: {
+      id: { in: appointments.map(a => a.lead.assignedVlId).filter(Boolean) as string[] },
+      storeId: storeIdFilter(user, filters.storeId ? [filters.storeId] : undefined),
+    },
     select: { id: true, name: true },
   });
   const vlMap = new Map(vlNames.map(v => [v.id, v.name]));
 
   const vsNames = await prisma.user.findMany({
-    where: { id: { in: appointments.map(a => a.lead.assignedVsId).filter(Boolean) as string[] } },
+    where: {
+      id: { in: appointments.map(a => a.lead.assignedVsId).filter(Boolean) as string[] },
+      storeId: storeIdFilter(user, filters.storeId ? [filters.storeId] : undefined),
+    },
     select: { id: true, name: true },
   });
   const vsMap = new Map(vsNames.map(v => [v.id, v.name]));
@@ -207,6 +220,7 @@ async function getAllConsultantsPortfolio(prisma: PrismaClient, filters: Product
     where: {
       role: UserRole.VL_CONSULTANT,
       active: true,
+      storeId: storeIdFilter(user, filters.storeId ? [filters.storeId] : undefined),
       ...(isRestricted ? { id: user.id } : {}),
       ...(filters.consultantId ? { id: filters.consultantId } : {}),
     },
@@ -215,13 +229,14 @@ async function getAllConsultantsPortfolio(prisma: PrismaClient, filters: Product
 
   return Promise.all(
     consultants.map(async (vl) => {
-      const summary = await getPortfolioSummary(prisma, vl.id, filters);
+      const summary = await getPortfolioSummary(prisma, vl.id, filters, user);
       const today = filters.date ?? new Date().toISOString().split('T')[0];
 
       const [appointmentsToday, confirmedToday, salesToday, lastSnapshot] = await Promise.all([
         prisma.appointment.count({
           where: {
             createdByUserId: vl.id,
+            storeId: storeIdFilter(user, filters.storeId ? [filters.storeId] : undefined),
             appointmentDate: {
               gte: new Date(today + 'T00:00:00Z'),
               lte: new Date(today + 'T23:59:59Z'),
@@ -232,6 +247,7 @@ async function getAllConsultantsPortfolio(prisma: PrismaClient, filters: Product
         prisma.appointment.count({
           where: {
             createdByUserId: vl.id,
+            storeId: storeIdFilter(user, filters.storeId ? [filters.storeId] : undefined),
             appointmentDate: {
               gte: new Date(today + 'T00:00:00Z'),
               lte: new Date(today + 'T23:59:59Z'),
@@ -242,6 +258,7 @@ async function getAllConsultantsPortfolio(prisma: PrismaClient, filters: Product
         prisma.sale.count({
           where: {
             vlUserId: vl.id,
+            storeId: storeIdFilter(user, filters.storeId ? [filters.storeId] : undefined),
             saleDate: {
               gte: new Date(today + 'T00:00:00Z'),
               lte: new Date(today + 'T23:59:59Z'),
@@ -249,7 +266,7 @@ async function getAllConsultantsPortfolio(prisma: PrismaClient, filters: Product
           },
         }),
         prisma.productivitySnapshot.findFirst({
-          where: { userId: vl.id },
+          where: { userId: vl.id, storeId: storeIdFilter(user, filters.storeId ? [filters.storeId] : undefined) },
           orderBy: { periodEnd: 'desc' },
         }),
       ]);
