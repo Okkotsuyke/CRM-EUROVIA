@@ -66,6 +66,38 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm turbo build
+      - name: Validate compiled CommonJS Vercel handler
+        shell: bash
+        env:
+          NODE_ENV: test
+          JWT_SECRET: ci-handler-secret-with-at-least-32-characters-aaaa
+          DATABASE_URL: postgresql://test:test@127.0.0.1:5432/test
+          SYNC_ENABLED: 'false'
+          SYONET_USE_REAL: 'false'
+        run: |
+          set -euo pipefail
+          node --check apps/api/dist/api/index.js
+          node <<'NODE'
+          const handler = require('./apps/api/dist/api/index.js').default;
+          let statusCode = 200;
+          let body = '';
+          const req = { method: 'GET', url: '/api/cron/health', headers: {}, body: undefined, query: {} };
+          const res = {
+            headersSent: false,
+            status(code) { statusCode = code; return this; },
+            setHeader() {},
+            send(value) { body = String(value); this.headersSent = true; return this; },
+            json(value) { body = JSON.stringify(value); this.headersSent = true; return this; },
+          };
+          Promise.resolve(handler(req, res)).then(() => {
+            const parsed = JSON.parse(body);
+            if (statusCode !== 200 || parsed.status !== 'ok' || parsed.service !== 'cron-jobs') {
+              console.error({ statusCode, body });
+              process.exit(1);
+            }
+            console.log('Compiled Vercel handler OK');
+          }).catch(error => { console.error(error); process.exit(1); });
+          NODE
       - name: Validate Vercel API-only configuration
         shell: bash
         run: |

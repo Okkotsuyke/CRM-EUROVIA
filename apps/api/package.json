@@ -2,7 +2,7 @@
   "name": "@crm/api",
   "version": "1.0.0",
   "private": true,
-  "type": "module",
+  "type": "commonjs",
   "packageManager": "pnpm@9.0.0",
   "scripts": {
     "dev": "npx tsx watch src/server.ts",
