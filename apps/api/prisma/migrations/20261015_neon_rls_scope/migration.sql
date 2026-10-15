@@ -18,9 +18,12 @@ BEGIN
  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='crm_eurovia_runtime') THEN
     CREATE ROLE crm_eurovia_runtime NOLOGIN NOSUPERUSER NOBYPASSRLS NOINHERIT;
  END IF;
+ IF EXISTS (SELECT 1 FROM pg_roles
+     WHERE rolname='crm_eurovia_runtime'
+       AND (rolcanlogin OR rolbypassrls OR rolsuper OR rolinherit)) THEN
+   RAISE EXCEPTION 'CRM EUROVIA: runtime role violates least privilege';
+ END IF;
 END $role$;
-
-ALTER ROLE crm_eurovia_runtime NOLOGIN NOSUPERUSER NOBYPASSRLS NOINHERIT;
 
 GRANT crm_eurovia_runtime TO crm_eurovia_owner;
 
