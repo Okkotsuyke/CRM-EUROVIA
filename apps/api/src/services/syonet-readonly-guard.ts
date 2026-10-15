@@ -15,7 +15,7 @@ import type { BrowserContext } from 'playwright-core';
 export type ReadOnlyDecision = { allowed: boolean; reason: string };
 const READ_METHODS = new Set(['GET', 'HEAD']);
 const LOGIN_PATH = '/portal/app.do';
-const DATA_API = /^\/api\/(?:parametro\/[^/]+|pagelogincrm|dashboard(?:\/\d+)?|empresa(?:\/\d+)?|usuario(?:\/\d+)?|midia(?:\/\d+)?|funil|produtividade|evento)\/?$/i;
+const DATA_API = /^\/api\/(?:parametro\/[^/]+|pagelogincrm|v2\/recaptchaclientkey|dashboard(?:\/\d+)?|empresa(?:\/\d+)?|usuario(?:\/\d+)?|midia(?:\/\d+)?|funil|produtividade|evento)\/?$/i;
 const MUTATION = /(?:^|[^a-z])(salvar|gravar|editar|update|insert|create|delete|remove|excluir|apagar|alterar|incluir|cancelar|aprovar|rejeitar|upload|importar|exportar|reset|clear|truncate)(?:$|[^a-z])/i;
 
 export function checkSyonetReadOnlyRequest(
@@ -47,6 +47,15 @@ export function checkSyonetReadOnlyRequest(
   }
 
   // Impede envio de requisicoes para outros hosts de Syonet.
+  // A tela de login carrega somente uma imagem institucional de um endpoint
+  // separado; ela e GET-only e fica explicitamente limitada a esse recurso.
+  const isApprovedLoginImage =
+    READ_METHODS.has(normalizedMethod) &&
+    destination.origin === 'https://escritorio.syonet.com:8282' &&
+    /^\/public\/imagelogincrm\/\d+$/i.test(destination.pathname);
+  if (isApprovedLoginImage) {
+    return { allowed: true, reason: 'read-only-login-asset' };
+  }
   if (
     destination.hostname === base.hostname ||
     destination.hostname.endsWith('.syonet.com')
@@ -71,7 +80,7 @@ export function checkSyonetReadOnlyRequest(
       return { allowed: false, reason: 'api-not-allowlisted' };
     }
     // Somente portal de consulta e recursos estaticos.
-    if (!path.startsWith('/api/') && !/^\/$|^\/portal\/(?:app\.do|acessasistema\.do)(?:\/)?$|^\/portal\/app\/.*\.(?:js|css|json|map|png|jpe?g|gif|svg|webp|ico|woff2?|ttf|eot)$/i.test(path) && !/^\/portal\/react-web-components\/.*\.(?:js|css|json|map|png|jpe?g|gif|svg|webp|ico|woff2?|ttf|eot)$/i.test(path) && !/^\/(?:portal\/)?(?:assets|static|resources|public|images|img|fonts|css|js|vendor|dist|webjars)\//i.test(path) && !/^\/(?:favicon\.ico|robots\.txt)$/i.test(path)) {
+    if (!path.startsWith('/api/') && !/^\/$|^\/portal\/(?:app\.do|acessasistema\.do|geraImagemLogon\.do)(?:\/)?$|^\/portal\/app\/.*\.(?:js|css|json|map|png|jpe?g|gif|svg|webp|ico|woff2?|ttf|eot)$/i.test(path) && !/^\/portal\/react-web-components\/.*\.(?:js|css|json|map|png|jpe?g|gif|svg|webp|ico|woff2?|ttf|eot)$/i.test(path) && !/^\/(?:portal\/)?(?:assets|static|resources|public|images|img|fonts|css|js|vendor|dist|webjars)\//i.test(path) && !/^\/(?:favicon\.ico|robots\.txt)$/i.test(path)) {
       return { allowed: false, reason: 'navigation-not-allowlisted' };
     }
   }
