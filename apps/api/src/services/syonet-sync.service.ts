@@ -32,7 +32,7 @@ const USE_REAL_CLIENT = process.env.SYONET_USE_REAL === 'true';
 export interface SyncOptions {
   fullLoad?: boolean;      // Carga completa (últimos 180 dias)
   incremental?: boolean;   // Carga incremental (desde última sincronização)
-  screens?: ('FUNIL' | 'PRODUTIVIDADE')[];
+  screens?: ('FUNIL' | 'PRODUTIVIDADE' | 'LEADS')[];
 }
 
 export interface SyncSummary {
@@ -481,13 +481,12 @@ async function syncLeads(batchId: string, dateRange?: { start: Date; end: Date }
  * Executa a sincronização completa
  */
 export async function runSync(options: SyncOptions = {}): Promise<SyncSummary> {
-  // Nunca gravar dados simulados como reais. Esse teste ocorre antes de
-  // criar registros no banco de dados do CRM.
-  if (!USE_REAL_CLIENT && (process.env.NODE_ENV === 'production' || process.env.VERCEL_ENV === 'production')) {
-    throw new Error('Syonet: dados simulados proibidos em producao');
-  }
-  if (options.fullLoad) {
-    throw new Error('Carga completa de leads desabilitada: o extrator atual usa dados simulados');
+  // Produção nunca pode cair no cliente mock. O Syonet continua protegido
+  // pelo guard imutável: toda coleta externa é consulta, enquanto as gravações
+  // deste serviço ficam exclusivamente no PostgreSQL do CRM.
+  const isProduction = process.env.NODE_ENV === 'production' || process.env.VERCEL_ENV === 'production';
+  if (!USE_REAL_CLIENT && isProduction) {
+    throw new Error('Syonet: cliente mock proibido em producao');
   }
   const batchId = generateBatchId();
   const startedAt = new Date();
