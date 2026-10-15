@@ -4,6 +4,7 @@
 import { FastifyPluginAsync, FastifyRequest } from 'fastify';
 import { Plaza } from '@prisma/client';
 import { authenticate } from '../middleware/auth.middleware';
+import { storeIdFilter } from '../services/store-scope';
 
 export const storeRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.addHook('onRequest', authenticate);
@@ -16,6 +17,7 @@ export const storeRoutes: FastifyPluginAsync = async (fastify) => {
       where: {
         ...(plaza ? { plaza } : {}),
         ...(active !== undefined ? { active: active === 'true' } : {}),
+        id: storeIdFilter(request.authUser),
       },
       orderBy: { plaza: 'asc' },
     });
@@ -34,7 +36,9 @@ export const storeRoutes: FastifyPluginAsync = async (fastify) => {
 
   // GET /api/v1/stores/:id
   fastify.get('/:id', async (request: FastifyRequest<{ Params: { id: string } }>, reply) => {
-    const store = await fastify.prisma.store.findUnique({ where: { id: request.params.id } });
+    const store = await fastify.prisma.store.findFirst({
+      where: { id: request.params.id, id: storeIdFilter(request.authUser) ? { in: storeIdFilter(request.authUser)!.in.filter(id => id === request.params.id) } : request.params.id },
+    });
     if (!store) return reply.status(404).send({ statusCode: 404, message: 'Store not found' });
     return store;
   });

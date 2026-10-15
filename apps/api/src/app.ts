@@ -42,6 +42,8 @@ export type DashboardAuthUser = {
   username: string;
   name: string;
   role: DashboardRole;
+  /** Permissoes atuais recuperadas do banco, NUNCA de claims do JWT. */
+  allowedStores: string[];
 };
 
 declare module 'fastify' {
@@ -74,9 +76,21 @@ async function authenticate(request: FastifyRequest, reply: FastifyReply) {
   } catch {
     return unauthorized(reply);
   }
-  // Refresh tokens e tokens do dashboard analítico são assinados com o mesmo segredo
-  if (decoded.type) return unauthorized(reply);
-  request.authUser = decoded;
+  // Tokens de outras finalidades nunca autenticam rotas operacionais.
+  if (decoded.type || !decoded.id) return unauthorized(reply);
+  // Revogacao de acesso, mudanca de funcao e loja tem efeito imediato,
+  // mesmo com JWT ainda valido. A base e a autoridade da autorizacao.
+  const current = await request.server.prisma.user.findUnique({
+    where: { id: decoded.id },
+    select: { id: true, username: true, role: true, storeId: true, active: true },
+  });
+  if (!current?.active) return unauthorized(reply);
+  request.authUser = {
+    id: current.id,
+    username: current.username,
+    role: current.role,
+    storeId: current.storeId,
+  };
 }
 
 /**
@@ -89,8 +103,24 @@ async function authenticateDashboard(request: FastifyRequest, reply: FastifyRepl
   } catch {
     return unauthorized(reply);
   }
-  if (decoded.type !== 'dashboard') return unauthorized(reply);
-  request.dashboardUser = decoded;
+  if (decoded.type !== 'dashboard' || !decoded.id) return unauthorized(reply);
+  const current = await request.server.prisma.dashboardUser.findUnique({
+    where: { id: decoded.id },
+    select: {
+      id: true, username: true, name: true, role: true,
+      active: true, allowedStores: true,
+    },
+  });
+  if (!current?.active || !['VIEWER', 'ADMIN'].includes(current.role)) {
+    return unauthorized(reply);
+  }
+  request.dashboardUser = {
+    id: current.id,
+    username: current.username,
+    name: current.name,
+    role: current.role as DashboardRole,
+    allowedStores: current.allowedStores,
+  };
 }
 
 function requireDashboardRoles(roles: DashboardRole[]) {

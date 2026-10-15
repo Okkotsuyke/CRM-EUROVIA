@@ -3,6 +3,7 @@
  * Todas as datas em UTC; timezone da loja convertido na query
  */
 import { PrismaClient, Plaza, UserRole, AppointmentStatus } from '@prisma/client';
+import { storeIdFilter } from './store-scope';
 
 type DashboardFilters = {
   startDate: Date;
@@ -30,12 +31,9 @@ function safeRate(numerator: number, denominator: number, decimals = 2): number 
 // ── Where clauses reutilizáveis ─────────────────────────────
 
 function buildLeadWhere(filters: DashboardFilters, user: AuthUser) {
-  const isRestricted = user.role !== 'ADMIN' && user.role !== 'MANAGER';
-
   return {
     receivedAt: { gte: filters.startDate, lte: filters.endDate },
-    storeId: isRestricted && user.storeId ? user.storeId : undefined,
-    ...(filters.storeIds?.length ? { storeId: { in: filters.storeIds } } : {}),
+    storeId: storeIdFilter(user, filters.storeIds),
     ...(filters.mediaIds?.length ? { mediaSourceId: { in: filters.mediaIds } } : {}),
     ...(filters.vlUserIds?.length ? { assignedVlId: { in: filters.vlUserIds } } : {}),
     ...(filters.vsUserIds?.length ? { assignedVsId: { in: filters.vsUserIds } } : {}),
@@ -44,31 +42,25 @@ function buildLeadWhere(filters: DashboardFilters, user: AuthUser) {
 }
 
 function buildAppointmentWhere(filters: DashboardFilters, user: AuthUser) {
-  const isRestricted = user.role !== 'ADMIN' && user.role !== 'MANAGER';
   return {
     appointmentDate: { gte: filters.startDate, lte: filters.endDate },
     status: { notIn: [AppointmentStatus.CANCELLED, AppointmentStatus.NO_SHOW] },
-    storeId: isRestricted && user.storeId ? user.storeId : undefined,
-    ...(filters.storeIds?.length ? { storeId: { in: filters.storeIds } } : {}),
+    storeId: storeIdFilter(user, filters.storeIds),
   };
 }
 
 function buildFlowWhere(filters: DashboardFilters, user: AuthUser) {
-  const isRestricted = user.role !== 'ADMIN' && user.role !== 'MANAGER';
   return {
     flowDate: { gte: filters.startDate, lte: filters.endDate },
-    storeId: isRestricted && user.storeId ? user.storeId : undefined,
-    ...(filters.storeIds?.length ? { storeId: { in: filters.storeIds } } : {}),
+    storeId: storeIdFilter(user, filters.storeIds),
   };
 }
 
 function buildSalesWhere(filters: DashboardFilters, user: AuthUser) {
-  const isRestricted = user.role !== 'ADMIN' && user.role !== 'MANAGER';
   return {
     saleDate: { gte: filters.startDate, lte: filters.endDate },
     tipoVenda: 'Venda Seminovos',
-    storeId: isRestricted && user.storeId ? user.storeId : undefined,
-    ...(filters.storeIds?.length ? { storeId: { in: filters.storeIds } } : {}),
+    storeId: storeIdFilter(user, filters.storeIds),
     ...(filters.vsUserIds?.length ? { vsUserId: { in: filters.vsUserIds } } : {}),
     ...(filters.mediaIds?.length ? { mediaSourceId: { in: filters.mediaIds } } : {}),
   };
@@ -105,15 +97,12 @@ async function getOverview(prisma: PrismaClient, filters: DashboardFilters, user
 // ── By Store ───────────────────────────────────────────────
 
 async function getByStore(prisma: PrismaClient, filters: DashboardFilters, user: AuthUser) {
-  const isRestricted = user.role !== 'ADMIN' && user.role !== 'MANAGER';
-
   // Pegar todas as lojas (filtradas por praça se aplicável)
   const stores = await prisma.store.findMany({
     where: {
       active: true,
       ...(filters.plaza && filters.plaza !== 'ALL' ? { plaza: filters.plaza } : {}),
-      ...(isRestricted && user.storeId ? { id: user.storeId } : {}),
-      ...(filters.storeIds?.length ? { id: { in: filters.storeIds } } : {}),
+      id: storeIdFilter(user, filters.storeIds),
     },
     orderBy: { plaza: 'asc' },
   });
@@ -203,13 +192,12 @@ async function getByMedia(prisma: PrismaClient, filters: DashboardFilters, user:
         prisma.lead.count({ where: { ...leadWhere, mediaSourceId: media.id } }),
         prisma.appointment.count({
           where: {
-            appointmentDate: { gte: filters.startDate, lte: filters.endDate },
-            status: { notIn: [AppointmentStatus.CANCELLED, AppointmentStatus.NO_SHOW] },
+            ...buildAppointmentWhere(filters, user),
             lead: { mediaSourceId: media.id },
           },
         }),
         prisma.flowEvent.count({
-          where: { flowDate: { gte: filters.startDate, lte: filters.endDate }, lead: { mediaSourceId: media.id } },
+          where: { ...buildFlowWhere(filters, user), lead: { mediaSourceId: media.id } },
         }),
         prisma.sale.count({ where: { ...salesWhere, mediaSourceId: media.id } }),
       ]);
@@ -243,6 +231,7 @@ async function getByConsultant(prisma: PrismaClient, filters: DashboardFilters, 
       role: UserRole.VL_CONSULTANT,
       active: true,
       ...(isRestricted ? { id: user.id } : {}),
+      storeId: storeIdFilter(user, filters.storeIds),
       ...(filters.vlUserIds?.length ? { id: { in: filters.vlUserIds } } : {}),
     },
     include: { store: true },
@@ -302,6 +291,7 @@ async function getBySeller(prisma: PrismaClient, filters: DashboardFilters, user
     where: {
       role: UserRole.VS_SELLER,
       active: true,
+      storeId: storeIdFilter(user, filters.storeIds),
       ...(filters.vsUserIds?.length ? { id: { in: filters.vsUserIds } } : {}),
     },
     include: { store: true },

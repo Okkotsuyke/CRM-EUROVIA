@@ -109,10 +109,6 @@ export default function LoginPage() {
           </form>
         </div>
 
-        {/* Seed info */}
-        <p className="text-center text-xs text-muted-foreground mt-6">
-          Seed inicial: admin / password123
-        </p>
       </div>
     </div>
   );
