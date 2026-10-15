@@ -16,5 +16,6 @@
       "source": "/(.*)",
       "destination": "/api/index"
     }
-  ]
+  ],
+  "outputDirectory": "dist"
 }
