@@ -17,7 +17,8 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:seed": "tsx prisma/seed.ts",
     "prisma:studio": "prisma studio",
-    "postinstall": "prisma generate"
+    "postinstall": "prisma generate",
+    "prisma:seed:production": "tsx prisma/seed.production.ts"
   },
   "dependencies": {
     "@fastify/cors": "^9.0.1",
