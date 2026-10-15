@@ -10,6 +10,7 @@
  */
 import { PrismaClient, Plaza, MediaCategory } from '@prisma/client';
 import bcrypt from 'bcryptjs';
+import { randomBytes } from 'node:crypto';
 
 const prisma = new PrismaClient();
 
@@ -67,6 +68,47 @@ async function main() {
     select: { id: true },
   })).map(s => s.id);
 
+  // Operational VL identities are CRM-local references used to attach Syonet
+  // productivity metrics. They never authenticate against Syonet.
+  const operationalPassword = process.env.CRM_OPERATIONAL_DEFAULT_PASSWORD;
+  const operationalPasswordHash = await bcrypt.hash(
+    operationalPassword || randomBytes(32).toString('base64url'),
+    12,
+  );
+  const operationalUsers = [
+    { name: 'Monalysa Silva', username: 'MONALYSA.SILVA', syonetCode: 'MONALYSA.SILVA', storeSyonetName: 'VIASUL DUNAS - CE' },
+    { name: 'Rebeca Wanderley', username: 'REBECA.WANDERLEY', syonetCode: 'REBECA.WANDERLEY', storeSyonetName: 'EUROVIA IGUATEMI - BA' },
+    { name: 'Sandra Silva', username: 'SANDRA.SILVA', syonetCode: 'SANDRA.SILVA', storeSyonetName: 'VIASUL DUNAS - CE' },
+    { name: 'Samara Lira', username: 'SAMARA.LIRA', syonetCode: 'SAMARA.LIRA', storeSyonetName: 'EUROVIA IGUATEMI - BA' },
+    { name: 'Tafnes Silva', username: 'TAFNES.SILVA', syonetCode: 'TAFNES.SILVA', storeSyonetName: 'VIASUL DUNAS - CE' },
+  ];
+
+  for (const operationalUser of operationalUsers) {
+    const store = await prisma.store.findUniqueOrThrow({
+      where: { syonetName: operationalUser.storeSyonetName },
+      select: { id: true },
+    });
+    await prisma.user.upsert({
+      where: { username: operationalUser.username },
+      update: {
+        name: operationalUser.name,
+        role: 'VL_CONSULTANT',
+        storeId: store.id,
+        syonetCode: operationalUser.syonetCode,
+        active: true,
+      },
+      create: {
+        name: operationalUser.name,
+        username: operationalUser.username,
+        password: operationalPasswordHash,
+        role: 'VL_CONSULTANT',
+        storeId: store.id,
+        syonetCode: operationalUser.syonetCode,
+        active: true,
+      },
+    });
+  }
+
   const username = required('CRM_EVALUATOR_USERNAME');
   const passwordHash = await bcrypt.hash(required('CRM_EVALUATOR_PASSWORD'), 12);
 
@@ -75,7 +117,7 @@ async function main() {
     update: {
       name: 'Avaliador do Dashboard',
       passwordHash,
-      role: 'VIEWER',
+      role: 'ADMIN',
       active: true,
       allowedStores,
     },
@@ -83,7 +125,7 @@ async function main() {
       username,
       name: 'Avaliador do Dashboard',
       passwordHash,
-      role: 'VIEWER',
+      role: 'ADMIN',
       active: true,
       allowedStores,
     },
