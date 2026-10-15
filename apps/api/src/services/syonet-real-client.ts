@@ -103,7 +103,7 @@ async function getBrowser(config: SyonetRealConfig): Promise<Browser> {
       browserInstance = await playwrightChromium.launch({
         headless: config.headless ?? true,
         executablePath,
-        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--user-data-dir=' + userDataDir],
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
       });
     }
 
