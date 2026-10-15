@@ -9,6 +9,7 @@ on:
       - 'apps/api/prisma/schema.prisma'
       - 'docs/security/eurovia-rls-firewall.sql'
       - 'scripts/security/homologate-rls-ci.sh'
+      - 'scripts/security/homologate-postgrest-ci.sh'
       - '.github/workflows/rls-homologation.yml'
   workflow_dispatch:
 
@@ -67,3 +68,5 @@ jobs:
         run: pnpm --filter @crm/api exec prisma db push --skip-generate
       - name: Testar RLS, grants e acesso real por role
         run: bash scripts/security/homologate-rls-ci.sh
+      - name: Homologar Data API HTTP PostgREST isolada
+        run: bash scripts/security/homologate-postgrest-ci.sh
