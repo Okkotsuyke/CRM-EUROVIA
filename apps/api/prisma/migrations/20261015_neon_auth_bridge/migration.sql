@@ -57,7 +57,7 @@ BEGIN
  INSERT INTO public.refresh_tokens(id,token,user_id,expires_at)
  VALUES (pg_catalog.gen_random_uuid()::text,
          encode(crm_crypto.digest(new_token,'sha256'),'hex'),u.id,expire_at);
- RETURN QUERY SELECT u.id,u.username,u.name,u.email,u.role,u.store_id,new_token,expire_at;
+ RETURN QUERY SELECT u.id,u.username,u.name::text,u.email::text,u.role,u.store_id,new_token,expire_at;
 END $fn$;
 
 -- CRM-EUROVIA-SQL-STEP-07
@@ -88,7 +88,7 @@ BEGIN
  INSERT INTO public.refresh_tokens(id,token,user_id,expires_at)
  VALUES (pg_catalog.gen_random_uuid()::text,
     encode(crm_crypto.digest(new_token,'sha256'),'hex'),u.id,expire_at);
- RETURN QUERY SELECT u.id,u.username,u.name,u.email,u.role,u.store_id,new_token,expire_at;
+ RETURN QUERY SELECT u.id,u.username,u.name::text,u.email::text,u.role,u.store_id,new_token,expire_at;
 END $fn$;
 
 -- CRM-EUROVIA-SQL-STEP-08
