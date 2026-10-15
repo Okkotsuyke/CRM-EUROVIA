@@ -5,12 +5,14 @@ on:
     paths:
       - 'apps/api/prisma/migrations/20261015_neon_sensitive_column_acl/migration.sql'
       - 'scripts/security/neon-column-acl-ci.sh'
+      - 'apps/api/src/__tests__/neon-postgres-http.integration.test.ts'
       - '.github/workflows/neon-column-acl-ci.yml'
   pull_request:
     branches: [main, develop]
     paths:
       - 'apps/api/prisma/migrations/20261015_neon_sensitive_column_acl/migration.sql'
       - 'scripts/security/neon-column-acl-ci.sh'
+      - 'apps/api/src/__tests__/neon-postgres-http.integration.test.ts'
       - '.github/workflows/neon-column-acl-ci.yml'
   workflow_dispatch:
 permissions:
@@ -64,3 +66,28 @@ jobs:
         run: pnpm --filter @crm/api exec prisma db push --skip-generate
       - name: Exercise Neon ACL and deny raw Syonet payloads
         run: bash scripts/security/neon-column-acl-ci.sh
+      - name: Prepare CI-only authentication functions and restricted LOGIN
+        run: |
+          set -euo pipefail
+          psql -X -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE ROLE crm_eurovia_ci_login LOGIN NOINHERIT NOBYPASSRLS NOCREATEDB NOCREATEROLE PASSWORD 'ci-only-login';
+          GRANT crm_eurovia_runtime TO crm_eurovia_ci_login WITH INHERIT FALSE, SET TRUE;
+          SQL
+          psql -X -v ON_ERROR_STOP=1 -f apps/api/prisma/migrations/20261015_neon_auth_bridge/migration.sql >/dev/null
+          psql -X -v ON_ERROR_STOP=1 <<'SQL'
+          UPDATE public.users
+            SET password=crm_crypto.crypt('ci-only-user-password',crm_crypto.gen_salt('bf',8))
+            WHERE id IN ('ci-acl-user-a','ci-acl-user-b');
+          SQL
+      - name: Fastify real PostgreSQL authenticated HTTP RLS
+        env:
+          CRM_NEON_STAGING_MODE: 'true'
+          CRM_EUROVIA_PG_E2E_CI: '1'
+          JWT_SECRET: test-eurovia-only-signing-key-for-disposable-ci-2026
+          DATABASE_URL: postgresql://crm_eurovia_ci_login:ci-only-login@127.0.0.1:5432/crm_eurovia?schema=public
+        run: pnpm --filter @crm/api exec vitest run src/__tests__/neon-postgres-http.integration.test.ts
+      - name: Verify no active CI refresh token survived
+        run: |
+          count="$(psql -X -At -v ON_ERROR_STOP=1 -c 'SELECT COUNT(*)::int FROM public.refresh_tokens WHERE expires_at > now()')"
+          test "$count" = 0
+
