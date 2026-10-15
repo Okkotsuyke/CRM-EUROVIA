@@ -29,7 +29,6 @@
  */
 
 import { chromium as playwrightChromium, Browser, Page, BrowserContext } from 'playwright-core';
-import serverlessChromium from '@sparticuz/chromium';
 import { assertSyonetReadOnlyRequest, installSyonetReadOnlyGuard } from './syonet-readonly-guard';
 import {
   normalizeMedia,
@@ -89,11 +88,16 @@ async function getBrowser(config: SyonetRealConfig): Promise<Browser> {
     console.log('🔧 Syonet: Iniciando navegador...');
     const isVercel = process.env.VERCEL === '1' || Boolean(process.env.VERCEL_ENV);
     if (isVercel) {
-      serverlessChromium.setGraphicsMode = false;
+      // @sparticuz/chromium is ESM-only; keep the production API CommonJS build
+      // and load the module through Node's native dynamic import.
+      const serverlessChromium = await new Function(
+        'return import("@sparticuz/chromium")',
+      )();
+      serverlessChromium.default.setGraphicsMode = false;
       browserInstance = await playwrightChromium.launch({
         headless: true,
-        args: [...serverlessChromium.args, '--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
-        executablePath: await serverlessChromium.executablePath(),
+        args: [...serverlessChromium.default.args, '--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
+        executablePath: await serverlessChromium.default.executablePath(),
       });
     } else {
       const executablePath = process.env.SYONET_CHROMIUM_EXECUTABLE_PATH;
