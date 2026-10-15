@@ -66,4 +66,13 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm turbo build
+      - name: Validate Vercel API package phase
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd apps/api
+          rm -rf node_modules package-lock.json
+          npm install --package-lock=false
+          test -f node_modules/fastify/fastify.js -o -f node_modules/fastify/index.js
+          node -e "import('fastify').then(()=>console.log('fastify package OK'))"
 
