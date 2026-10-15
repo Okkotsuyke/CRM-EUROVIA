@@ -1,9 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 const STAGING_API = 'https://crm-eurovia-api-git-fix-eurovia-hardening-0307ad-maykengld-9931.vercel.app';
+const PRODUCTION_API = 'https://crm-eurovia-api.vercel.app';
 
 export async function POST(request: NextRequest) {
-  if (process.env.CRM_EUROVIA_PREVIEW_ONLY !== 'true' || process.env.VERCEL_ENV !== 'preview') {
+  const enabled = process.env.VERCEL_ENV === 'preview'
+    ? process.env.CRM_EUROVIA_PREVIEW_ONLY === 'true'
+    : process.env.VERCEL_ENV === 'production' && process.env.CRM_EUROVIA_PRODUCTION_READONLY === 'true';
+  if (!enabled) {
     return NextResponse.json({ success: false, error: 'Disponivel apenas no ambiente de homologacao' }, { status: 503 });
   }
   let body: unknown;
@@ -23,7 +27,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: false, error: 'Autenticacao entre servicos indisponivel' }, { status: 503 });
   }
   try {
-    const upstream = await fetch(STAGING_API + '/api/v1/dashboard/auth/login', {
+    const apiBase = process.env.VERCEL_ENV === 'production' ? PRODUCTION_API : STAGING_API;
+    const upstream = await fetch(apiBase + '/api/v1/dashboard/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-vercel-protection-bypass': bypass },
       body: JSON.stringify({ username, password }),
