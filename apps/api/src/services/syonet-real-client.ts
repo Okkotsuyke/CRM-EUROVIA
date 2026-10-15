@@ -249,7 +249,7 @@ export async function syonetLogin(config: SyonetRealConfig): Promise<boolean> {
 
     // Ir para página de login
     console.log('📍 Navegando para página de login...');
-    await page.goto(`${config.baseUrl}/portal/app.do?modulo=login`, {
+    await page.goto(`${config.baseUrl}/portal/app.do?modulo=login#/login`, {
       waitUntil: 'domcontentloaded',
       timeout: LOGIN_TIMEOUT,
     });
