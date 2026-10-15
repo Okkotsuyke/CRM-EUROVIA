@@ -1,56 +1,79 @@
-# CRM EUROVIA — Fastify no Neon staging (preview somente)
+# CRM Eurovia — API Fastify conectada ao Neon staging
 
-Destinos autorizados:
-- Neon project `noisy-hat-46747617` (`crm-eurovia`), AWS São Paulo
-- Branch `br-bold-sun-b6p0nkhp` (`staging-security-rls`)
-- Database `crm_eurovia`
-- Projeto Vercel `crm-eurovia-api` (`prj_yqg4rMwLALfSgojS1xV1ZkxrrIEH`)
-- Branch GitHub `fix/eurovia-hardening-deploy-20261015` somente em Preview.
+Data da validação: **15/10/2026**. Escopo: **CRM EUROVIA exclusivamente**.
 
-O projeto Neon `nameless-night-94061643` (MVP-Creator) é expressamente
-PROIBIDO. A branch principal Neon também está fora de escopo.
+## Identidades imutáveis para esta homologação
 
-## Problemas identificados
-1. O projeto Vercel chamado `crm-eurovia-api` construía o FRONTEND Next.js
-   antes desta configuração; ajustar Root Directory para `apps/api`.
-2. Roles criadas pela Neon API nascem com `neon_superuser` e `BYPASSRLS`!
-   A role `crm_eurovia_api_staging` foi criada, mas REJEITADA
-   como credencial de API após constatar esses privilégios. O Neon
-   recusou a revogação/ALTER ROLE no plano atual. Não configurar
-   sua senha em Vercel. Avaliar sua remoção pela Console com autorização.
-3. A credencial de app deverá ser uma role criada com SQL no staging,
-   LOGIN, NOBYPASSRLS, NOSUPERUSER, NOCREATEDB, NOCREATEROLE,
-   NOINHERIT, membro apenas de `crm_eurovia_runtime` para SET ROLE.
-4. A role de aplicação não pode acessar tabelas fora de transação
-   com `SET LOCAL ROLE crm_eurovia_runtime` e contexto de ator validado.
-5. O modo de staging da API mantém SOMENTE /health disponível; toda rota
-   de negócio responde 503 de forma intencional até o trabalho de
-   integração Auth / RBAC de cada rota.
+| Serviço | Identificador verificado |
+|---|---|
+| GitHub | `Okkotsuyke/CRM-EUROVIA` |
+| Branch GitHub de segurança | `fix/eurovia-hardening-deploy-20261015` |
+| Vercel API | `crm-eurovia-api`, `prj_yqg4rMwLALfSgojS1xV1ZkxrrIEH` |
+| Neon CRM | `crm-eurovia`, `noisy-hat-46747617` |
+| Neon staging | `staging-security-rls`, `br-bold-sun-b6p0nkhp` |
+| Banco e região | `crm_eurovia`, `aws-sa-east-1`, PostgreSQL 17 |
+| Neon main (não alterada) | `br-delicate-sound-b6l7thd1`, **zero tabelas** |
+| Outros projetos (proibidos) | Neon MVP `nameless-night-94061643` |
 
-## Segurança em runtime
+## Evidências operacionais verificadas
 
-- `validateNeonStagingEnv` verifica projeto, branch, região,
-  schema, nome da role, SSL obrigatório e `VERCEL_ENV=preview`.
-- `checkNeonStagingReadiness` testa o banco como usuário de login
-  sem bypass, verifica FORCE RLS nas 14 tabelas e executa uma
-  transação que `SET LOCAL ROLE crm_eurovia_runtime`. Sem
-  identidade assinada no backend, a consulta a `stores` deve
-  retornar **zero linhas**.
-- `withNeonStagingActor` define o ator no contexto transacional
-  exclusivamente para uso FUTURO depois de validar sessão no Fastify.
-  NÃO expor dados SQL nem aceitar actor_id de parâmetros da URL.
-- Todos os endpoints de Syonet estão bloqueados nesse preview; nenhum
-  job cron/Syonet deve ser agendado.
-- DATABASE_URL/JWT_SECRET são variáveis Secret da Vercel apenas
-  Preview da branch de segurança, nunca arquivos Git ou frontend.
+- **Causa raiz anterior:** Node 24 na Vercel lançava `ERR_MODULE_NOT_FOUND`
+  ao importar `/var/task/apps/api/src/app` de `api/index.js`. O projeto
+  compilava com sucesso, mas o runtime retornava `FUNCTION_INVOCATION_FAILED`.
+- **Correção da causa:** commit `6c043665df4bbc523f7fe95026b489116ec1df64`
+  compila a API para **CommonJS** e usa `@vercel/node` explicitamente.
+- **CI aprovado:** https://github.com/Okkotsuyke/CRM-EUROVIA/actions/runs/38781885777
+  Inclui testes unitários, TypeScript/build, `node --check`, execução real do
+  handler compilado e verificação do empacotamento da API.
+- **Deploy controlado:** `dpl_7BrfLzbMsaujR73jHK1hvuRFTAzE`, status
+  `READY`, ambiente **Preview**, sem promoção à produção.
+- **Health:** `GET /health` -> HTTP **200**, corpo
+  `status=ok`, `integrations.database=connected`, latência observada
+  de 81 ms naquele teste.
+- **Bloqueio de negócio:** `GET /api/v1/stores` -> HTTP **503**
+  (`staging_security_gate`), intencional.
+- **Bloqueio de cron:** `GET /api/cron/health` -> HTTP **503**
+  (`staging_security_gate`), intencional.
+- **Logs reais da Vercel:** registraram a resposta 200 do Fastify e
+  as negações 503, sem o antigo `ERR_MODULE_NOT_FOUND`.
+- **Neon Staging:** 14 tabelas com RLS ENABLE+FORCE, 20 policies,
+  duas lojas **sintéticas**. A main Neon permanece vazia.
 
-## Gates para abrir demais rotas da API
-1. Integração de autenticação com role própria de auth, sem BYPASSRLS.
-2. Converter todas as consultas de negócios para transações com
-   RLS contexto validado, incluindo serviços/singletons Prisma.
-3. Testes com 2 lojas sintéticas cobrindo leitura e escrita,
-   sessões inativas, admin e avaliações.
-4. Regularizar a tabela `_prisma_migrations` do staging via
-   `prisma migrate resolve --applied` (não reaplicar DDL).
-5. Verificar preview, runtime, Sentry e rollback.
-6. Nunca promover Neon staging ou alterar Supabase sem homologação.
+## Credenciais e privilégios
+
+- Vercel armazena `DATABASE_URL` e `JWT_SECRET` como **Secrets**,
+  escopados apenas ao **Preview da branch de segurança**. Os valores não
+  foram commitados e não podem ser usados em produção por configuração.
+- A API usa `crm_eurovia_staging_login`: LOGIN, NOBYPASSRLS,
+  NOSUPERUSER, NOCREATEDB, NOCREATEROLE, NOINHERIT.
+- Consulta real ao banco como essa role mostrou:
+  `SET LOCAL ROLE crm_eurovia_runtime`,
+  `current_user=crm_eurovia_runtime` e
+  **zero lojas visíveis sem ator**. Isso comprova o deny-by-default.
+- A role Neon `crm_eurovia_owner` possui `BYPASSRLS`: **nunca usá-la
+  na API**. A role privilegiada temporária `crm_eurovia_api_staging`
+  foi removida após a auditoria.
+- O Neon Data API público **não foi provisionado**.
+
+## Avisos não bloqueantes identificados
+
+- `DEP0169`: alguma dependência utiliza `url.parse()` no Node 24.
+  Identificar o pacote originador e atualizar após teste de regressão.
+- `Sentry DSN nao configurado - tracing desabilitado` no Preview.
+  Configurar apenas DSN do CRM correto antes de produção.
+
+## Gates pendentes antes de habilitar rotas comerciais
+
+1. Validar autenticação/sessões e criar role apropriada ao fluxo de login,
+   sem `BYPASSRLS` e sem expor senhas na role comercial.
+2. Adaptar **todas** as consultas Prisma a transações com contexto de
+   ator autorizado, pois `SET LOCAL` vale somente na transação.
+3. Repetir testes cross-store com Fastify real e dois perfis sintéticos.
+4. Regularizar a tabela `_prisma_migrations` no staging via
+   `prisma migrate resolve --applied`, nunca reaplicar cegamente o DDL.
+5. Backups, rollback, alarmes/monitoramento e validação de custos.
+6. Impedir escrita no Syonet sempre, inclusive por scripts avulsos;
+   consulta somente após avaliação de autenticação segura.
+7. Concluir revisão da PR em draft antes de promover produção.
+
+Sem qualquer alteração em MVP-Creator, Neon main, Supabase legado ou Syonet.
