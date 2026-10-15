@@ -28,7 +28,9 @@
  * - 244: Funil de Vendas
  */
 
-import { chromium, Browser, Page, BrowserContext } from 'playwright';
+import { chromium as playwrightChromium, Browser, Page, BrowserContext } from 'playwright-core';
+import serverlessChromium from '@sparticuz/chromium';
+import { randomUUID } from 'node:crypto';
 import { assertSyonetReadOnlyRequest, installSyonetReadOnlyGuard } from './syonet-readonly-guard';
 import {
   normalizeMedia,
@@ -86,16 +88,29 @@ const CRM_PRODUCTION_SYONET_STORE_IDS = new Set([75, 102, 12, 23, 86, 77, 92]);
 async function getBrowser(config: SyonetRealConfig): Promise<Browser> {
   if (!browserInstance || !browserInstance.isConnected()) {
     console.log('🔧 Syonet: Iniciando navegador...');
-    browserInstance = await chromium.launch({
-      headless: config.headless ?? true,
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-gpu',
-      ],
-    });
-    console.log('✅ Syonet: Navegador iniciado');
+    const isVercel = process.env.VERCEL === '1' || Boolean(process.env.VERCEL_ENV);
+    const userDataDir = '/tmp/syonet-pw-' + randomUUID();
+
+    if (isVercel) {
+      serverlessChromium.setGraphicsMode = false;
+      browserInstance = await playwrightChromium.launch({
+        headless: true,
+        args: [...serverlessChromium.args, '--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--user-data-dir=' + userDataDir],
+        executablePath: await serverlessChromium.executablePath(),
+      });
+    } else {
+      const executablePath = process.env.SYONET_CHROMIUM_EXECUTABLE_PATH;
+      if (!executablePath) {
+        throw new Error('Syonet: defina SYONET_CHROMIUM_EXECUTABLE_PATH no ambiente local');
+      }
+      browserInstance = await playwrightChromium.launch({
+        headless: config.headless ?? true,
+        executablePath,
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--user-data-dir=' + userDataDir],
+      });
+    }
+
+    console.log('✅ Syonet: Navegador iniciado em modo ' + (isVercel ? 'serverless' : 'local'));
   }
   return browserInstance;
 }
