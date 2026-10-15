@@ -27,9 +27,6 @@ importers:
 
   apps/api:
     dependencies:
-      '@crm/shared':
-        specifier: workspace:*
-        version: link:../../packages/shared
       '@fastify/cors':
         specifier: ^9.0.1
         version: 9.0.1
