@@ -18,6 +18,8 @@ function getFastify() {
   return fastifyPromise;
 }
 
+export const config = { maxDuration: 60 };
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const fastify = await getFastify();

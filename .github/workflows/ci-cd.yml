@@ -66,6 +66,23 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm turbo build
+      - name: Validate Vercel API-only configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs = require('fs');
+          const cfg = JSON.parse(fs.readFileSync('apps/api/vercel.json','utf8'));
+          const fail = (m) => { console.error(m); process.exit(1); };
+          if (cfg.buildCommand !== undefined) fail('API-only Vercel config must not define buildCommand');
+          if (cfg.outputDirectory !== undefined) fail('API-only Vercel config must not define outputDirectory');
+          if (cfg.framework !== undefined) fail('API-only Vercel config must not use framework autodetection');
+          if (!Array.isArray(cfg.builds) || cfg.builds.length !== 1) fail('Expected exactly one explicit build target');
+          if (cfg.builds[0].src !== 'api/index.ts' || cfg.builds[0].use !== '@vercel/node') fail('Unexpected Vercel Function build target');
+          const rule = cfg.git?.deploymentEnabled?.['fix/eurovia-hardening-deploy-20261015'];
+          if (rule !== false) fail('Security branch auto-deploy must remain disabled');
+          console.log('Vercel API-only config OK');
+          NODE
       - name: Validate Vercel API package phase
         shell: bash
         run: |
