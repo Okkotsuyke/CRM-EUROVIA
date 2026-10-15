@@ -75,6 +75,11 @@ let lastLoginTime: number = 0;
 // Configurações de cache
 const SESSION_CACHE_MINUTES = 25; // Cache sessão por 25 minutos
 
+// Escopo produtivo do dashboard aprovado: 7 lojas das praças Fortaleza/Salvador.
+// A conta do Syonet pode enxergar outras empresas, mas elas não entram no CRM
+// até serem explicitamente adicionadas ao escopo de negócio.
+const CRM_PRODUCTION_SYONET_STORE_IDS = new Set([75, 102, 12, 23, 86, 77, 92]);
+
 /**
  * Obtém ou cria uma instância do navegador
  */
@@ -358,7 +363,7 @@ export async function extractFunilData(config: SyonetRealConfig, filters?: {
           .filter((id): id is number => Number.isInteger(id)));
 
         empresasAtivas = [...empresasMap.entries()]
-          .filter(([id, emp]) => emp.ativo && mappedIds.has(id))
+          .filter(([id, emp]) => emp.ativo && mappedIds.has(id) && CRM_PRODUCTION_SYONET_STORE_IDS.has(id))
           .map(([id]) => id)
           .sort((a, b) => a - b);
 
@@ -856,7 +861,7 @@ export async function extractLeadsData(
 
         for (const empresa of empresas) {
           const id = Number(empresa.idEmpresa ?? empresa.id);
-          if (!Number.isInteger(id) || empresa.ativo === false || !mappedIds.has(id)) continue;
+          if (!Number.isInteger(id) || empresa.ativo === false || !mappedIds.has(id) || !CRM_PRODUCTION_SYONET_STORE_IDS.has(id)) continue;
           empresaIds.push(id);
           empresaNames.set(id, empresa.nome || empresa.apelido || ('Empresa ' + id));
         }
