@@ -71,7 +71,7 @@ export function checkSyonetReadOnlyRequest(
       return { allowed: false, reason: 'api-not-allowlisted' };
     }
     // Somente portal de consulta e recursos estaticos.
-    if (!path.startsWith('/api/') && !/^\/$|^\/portal\/(?:app\.do|acessasistema\.do)(?:\/)?$|^\/(?:portal\/)?(?:assets|static|resources|public|images|img|fonts|css|js|vendor|dist|webjars)\/|^\/(?:favicon\.ico|robots\.txt)$/i.test(path)) {
+    if (!path.startsWith('/api/') && !/^\/$|^\/portal\/(?:app\.do|acessasistema\.do)(?:\/)?$|^\/portal\/app\/.*\.(?:js|css|json|map|png|jpe?g|gif|svg|webp|ico|woff2?|ttf|eot)$/i.test(path) && !/^\/portal\/react-web-components\/components\/[^/]+\.js$/i.test(path) && !/^\/(?:portal\/)?(?:assets|static|resources|public|images|img|fonts|css|js|vendor|dist|webjars)\//i.test(path) && !/^\/(?:favicon\.ico|robots\.txt)$/i.test(path)) {
       return { allowed: false, reason: 'navigation-not-allowlisted' };
     }
   }
