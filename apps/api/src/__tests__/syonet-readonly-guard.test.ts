@@ -14,8 +14,12 @@ describe('politica imutavel de somente leitura Syonet', () => {
     expect(checkSyonetReadOnlyRequest(base + '/api/empresa', method, base).allowed).toBe(false);
   });
 
-  it('nao permite POST de login enquanto nao houver rota de autenticacao analisada', () => {
-    expect(checkSyonetReadOnlyRequest(base + '/portal/app.do?modulo=login', 'POST', base).allowed).toBe(false);
+  it('permite somente o POST exato do formulario de login do portal', () => {
+    expect(checkSyonetReadOnlyRequest(base + '/portal/app.do?modulo=login', 'POST', base).allowed).toBe(true);
+    expect(checkSyonetReadOnlyRequest(base + '/portal/app.do?modulo=login', 'POST', base).reason).toBe('read-only-login');
+    expect(checkSyonetReadOnlyRequest(base + '/portal/app.do?modulo=login&acao=excluir', 'POST', base).allowed).toBe(true);
+    expect(checkSyonetReadOnlyRequest(base + '/api/login', 'POST', base).allowed).toBe(false);
+    expect(checkSyonetReadOnlyRequest(base + '/api/empresa', 'POST', base).allowed).toBe(false);
   });
 
   it('bloqueia GET de efeito colateral e rotas sem allowlist', () => {
