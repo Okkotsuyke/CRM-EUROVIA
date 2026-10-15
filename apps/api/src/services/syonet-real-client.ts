@@ -29,6 +29,7 @@
  */
 
 import { chromium, Browser, Page, BrowserContext } from 'playwright';
+import { assertSyonetReadOnlyRequest, installSyonetReadOnlyGuard } from './syonet-readonly-guard';
 import {
   normalizeMedia,
   normalizeLeadStatus,
@@ -97,12 +98,13 @@ async function getBrowser(config: SyonetRealConfig): Promise<Browser> {
 /**
  * Obtém ou cria um contexto do navegador
  */
-async function getContext(browser: Browser): Promise<BrowserContext> {
+async function getContext(browser: Browser, baseUrl: string): Promise<BrowserContext> {
   if (!contextInstance || contextInstance.pages().length === 0) {
     contextInstance = await browser.newContext({
       viewport: { width: 1920, height: 1080 },
-      ignoreHTTPSErrors: true,
+      serviceWorkers: 'block',
     });
+    await installSyonetReadOnlyGuard(contextInstance, baseUrl);
   }
   return contextInstance;
 }
@@ -110,9 +112,9 @@ async function getContext(browser: Browser): Promise<BrowserContext> {
 /**
  * Obtém ou cria uma página
  */
-async function getPage(browser: Browser): Promise<Page> {
+async function getPage(browser: Browser, baseUrl: string): Promise<Page> {
   if (!pageInstance || pageInstance.isClosed()) {
-    const context = await getContext(browser);
+    const context = await getContext(browser, baseUrl);
     pageInstance = await context.newPage();
     pageInstance.setDefaultTimeout(DEFAULT_TIMEOUT);
     pageInstance.setDefaultNavigationTimeout(DEFAULT_TIMEOUT);
@@ -148,7 +150,8 @@ async function getSessionCookies(): Promise<string> {
  */
 async function apiRequest(page: Page, endpoint: string, options: RequestInit = {}): Promise<any> {
   const cookies = await getSessionCookies();
-  const url = `${page.url().split('/portal')[0]}${endpoint}`;
+  const url = new URL(endpoint, process.env.SYONET_URL || 'https://viasul.syonet.com').href;
+  assertSyonetReadOnlyRequest(url, options.method || 'GET', process.env.SYONET_URL || 'https://viasul.syonet.com');
 
   const response = await page.evaluate(async (args: { url: string; cookie: string; options: RequestInit }) => {
     const res = await fetch(args.url, {
@@ -221,7 +224,7 @@ export async function syonetLogin(config: SyonetRealConfig): Promise<boolean> {
     }
 
     const browser = await getBrowser(config);
-    const page = await getPage(browser);
+    const page = await getPage(browser, config.baseUrl);
 
     // Ir para página de login
     console.log('📍 Navegando para página de login...');

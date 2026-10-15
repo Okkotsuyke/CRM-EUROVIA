@@ -481,11 +481,20 @@ async function syncLeads(batchId: string, dateRange?: { start: Date; end: Date }
  * Executa a sincronização completa
  */
 export async function runSync(options: SyncOptions = {}): Promise<SyncSummary> {
+  // Nunca gravar dados simulados como reais. Esse teste ocorre antes de
+  // criar registros no banco de dados do CRM.
+  if (!USE_REAL_CLIENT && (process.env.NODE_ENV === 'production' || process.env.VERCEL_ENV === 'production')) {
+    throw new Error('Syonet: dados simulados proibidos em producao');
+  }
+  if (options.fullLoad) {
+    throw new Error('Carga completa de leads desabilitada: o extrator atual usa dados simulados');
+  }
   const batchId = generateBatchId();
   const startedAt = new Date();
   const screens: SyncSummary['screens'] = [];
   let totalRowsProcessed = 0;
   let totalErrors = 0;
+  let syncRunId: string | null = null;
 
   console.log(`\n🚀 INICIANDO SINCRONIZAÇÃO - Batch: ${batchId}`);
   console.log(`📅 Data: ${startedAt.toISOString()}`);
@@ -494,7 +503,7 @@ export async function runSync(options: SyncOptions = {}): Promise<SyncSummary> {
 
   try {
     // Registrar início da sincronização
-    const syncRunId = await registerSyncStart(batchId, 'SYONET_API');
+    syncRunId = await registerSyncStart(batchId, 'SYONET_API');
 
     // Sincronizar Funil
     if (!options.screens || options.screens.includes('FUNIL')) {
@@ -552,12 +561,21 @@ export async function runSync(options: SyncOptions = {}): Promise<SyncSummary> {
     console.log(`❌ Total erros: ${totalErrors}`);
 
   } catch (err) {
-    console.error('❌ ERRO NA SINCRONIZAÇÃO:', err);
+    totalErrors += 1;
+    if (syncRunId) {
+      try {
+        await registerSyncEnd(syncRunId, 'FAILED', totalRowsProcessed, 0, 0, totalErrors, 'Falha de sistema durante sincronizacao');
+      } catch {
+        console.error('Falha adicional ao registrar finalizacao de sync no banco Eurovia');
+      }
+    }
+    // Nao registrar payloads, URLs ou cookies de integracao em logs.
+    console.error('Falha no processo de sincronizacao Eurovia');
     screens.push({
       screen: 'SYSTEM',
       success: false,
       rowsProcessed: 0,
-      errors: [String(err)],
+      errors: ['Falha de sistema durante sincronizacao'],
     });
   }
 
