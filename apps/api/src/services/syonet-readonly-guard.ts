@@ -1,9 +1,10 @@
 /**
  * Contencao read-only para integracoes de consulta ao Syonet.
  *
- * NENHUMA escrita no Syonet e autorizada. Nao existe flag para
- * desativar esse bloqueio. Bloqueia inclusive POST de login enquanto
- * nao houver uma integracao de identidade comprovadamente segura.
+ * NENHUMA escrita de dados no Syonet e autorizada. Nao existe flag para
+ * desativar esse bloqueio. A unica excecao a GET/HEAD e o POST do proprio
+ * formulario de login do portal, que somente autentica a sessao e nao
+ * cria, edita, exclui ou importa dados de negocio.
  *
  * IMPORTANTE: bloquear verbos mutantes nao basta: endpoints GET com
  * efeitos colaterais tambem precisam ser barrados; por isso URLs de
@@ -13,6 +14,7 @@ import type { BrowserContext } from 'playwright';
 
 export type ReadOnlyDecision = { allowed: boolean; reason: string };
 const READ_METHODS = new Set(['GET', 'HEAD']);
+const LOGIN_PATH = '/portal/app.do';
 const DATA_API = /^\/api\/(?:dashboard(?:\/\d+)?|empresa(?:\/\d+)?|usuario(?:\/\d+)?|midia(?:\/\d+)?|funil|produtividade|evento)\/?$/i;
 const MUTATION = /(?:^|[^a-z])(salvar|gravar|editar|update|insert|create|delete|remove|excluir|apagar|alterar|incluir|cancelar|aprovar|rejeitar|upload|importar|exportar|reset|clear|truncate)(?:$|[^a-z])/i;
 
@@ -33,7 +35,13 @@ export function checkSyonetReadOnlyRequest(
   if (base.protocol !== 'https:' || !base.hostname || destination.protocol !== 'https:') {
     return { allowed: false, reason: 'https-required' };
   }
-  if (!READ_METHODS.has(method.toUpperCase())) {
+  const normalizedMethod = method.toUpperCase();
+  const isApprovedLoginPost =
+    normalizedMethod === 'POST' &&
+    destination.pathname.toLowerCase() === LOGIN_PATH &&
+    destination.searchParams.get('modulo')?.toLowerCase() === 'login';
+
+  if (!READ_METHODS.has(normalizedMethod) && !isApprovedLoginPost) {
     return { allowed: false, reason: 'write-method-denied' };
   }
 
@@ -44,6 +52,9 @@ export function checkSyonetReadOnlyRequest(
   ) {
     if (destination.origin !== base.origin) {
       return { allowed: false, reason: 'outside-approved-origin' };
+    }
+    if (isApprovedLoginPost) {
+      return { allowed: true, reason: 'read-only-login' };
     }
     let decodedPath: string;
     try {
