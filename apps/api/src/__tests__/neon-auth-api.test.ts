@@ -155,7 +155,7 @@ describe('Fastify Neon staging: JWT -> Prisma transaction -> RLS (no external ne
 
   it('all other commercial mutations, Syonet and cron remain gated', async () => {
     for (const request of [
-      {method:'GET',url:'/api/v1/leads'},
+      {method:'PUT',url:'/api/v1/leads/stg-lead-a'},
       {method:'POST',url:'/api/v1/users'},
       {method:'POST',url:'/api/v1/sync/run'},
       {method:'GET',url:'/api/v1/syonet-dashboard'},
