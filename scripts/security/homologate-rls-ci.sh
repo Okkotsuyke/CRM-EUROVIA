@@ -26,10 +26,10 @@ ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
   GRANT ALL ON SEQUENCES TO anon, authenticated, service_role;
 INSERT INTO public.stores
- ("id","shortName","syonetName",plaza,city,state,timezone)
+ ("id","shortName","syonetName",plaza,city,state,timezone,"updated_at")
 VALUES
  ('ci-loja-1','CI Loja Eurovia','CI_LOJA_SINTETICA','FORTALEZA',
-  'Fortaleza','CE','America/Fortaleza');
+  'Fortaleza','CE','America/Fortaleza',now());
 SQL
 
 baseline="$(db -c 'SET ROLE anon; SELECT count(*) FROM public.stores; RESET ROLE;')"
