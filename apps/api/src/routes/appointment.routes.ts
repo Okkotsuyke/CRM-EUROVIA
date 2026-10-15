@@ -6,6 +6,7 @@
 
 import { FastifyInstance } from 'fastify';
 import { authenticate } from '../middleware/auth.middleware';
+import { storeIdFilter } from '../services/store-scope';
 import { attachLeadAssignees } from '../services/lead-assignees';
 
 export async function appointmentRoutes(fastify: FastifyInstance) {
@@ -27,9 +28,12 @@ export async function appointmentRoutes(fastify: FastifyInstance) {
         offset?: string;
       };
 
-      const where: any = {};
-
-      if (query.storeId) where.storeId = query.storeId;
+      const where: any = {
+        storeId: storeIdFilter(request.authUser),
+      };
+      if (query.storeId) {
+        where.storeId = storeIdFilter(request.authUser, [query.storeId]);
+      }
       if (query.vlUserId) where.lead = { assignedVlId: query.vlUserId };
       if (query.status) where.status = query.status;
 
@@ -92,8 +96,8 @@ export async function appointmentRoutes(fastify: FastifyInstance) {
     try {
       const { id } = request.params as { id: string };
 
-      const appointment = await fastify.prisma.appointment.findUnique({
-        where: { id },
+      const appointment = await fastify.prisma.appointment.findFirst({
+        where: { id, storeId: storeIdFilter(request.authUser) },
         include: {
           lead: {
             include: {
@@ -149,22 +153,20 @@ export async function appointmentRoutes(fastify: FastifyInstance) {
           });
         }
 
-        // Buscar a loja do lead se não especificada
-        let storeId = body.storeId;
-        if (!storeId) {
-          const lead = await fastify.prisma.lead.findUnique({
-            where: { id: body.leadId },
-            select: { storeId: true },
-          });
-          storeId = lead?.storeId;
-        }
-
-        if (!storeId) {
+        // Fonte da loja e sempre o lead autorizado, nao um parametro arbitrario.
+        const lead = await fastify.prisma.lead.findFirst({
+          where: { id: body.leadId, storeId: storeIdFilter(request.authUser) },
+          select: { storeId: true },
+        });
+        if (!lead) return reply.status(404).send({
+          success: false, error: 'Lead não encontrado',
+        });
+        if (body.storeId && body.storeId !== lead.storeId) {
           return reply.status(400).send({
-            success: false,
-            error: 'Loja não encontrada para o lead',
+            success: false, error: 'Loja do agendamento diferente da loja do lead',
           });
         }
+        const storeId = lead.storeId;
 
         const appointment = await fastify.prisma.appointment.create({
           data: {
@@ -229,6 +231,15 @@ export async function appointmentRoutes(fastify: FastifyInstance) {
           appointmentDate?: string;
         };
 
+        const scope = storeIdFilter(request.authUser);
+        const visible = await fastify.prisma.appointment.findFirst({
+          where: { id, storeId: scope },
+          select: { id: true, leadId: true },
+        });
+        if (!visible) return reply.status(404).send({
+          success: false, error: 'Agendamento não encontrado',
+        });
+
         const updateData: any = {};
 
         if (body.status) {
@@ -277,7 +288,7 @@ export async function appointmentRoutes(fastify: FastifyInstance) {
         if (body.appointmentDate) updateData.appointmentDate = new Date(body.appointmentDate);
 
         const appointment = await fastify.prisma.appointment.update({
-          where: { id },
+          where: { id, ...(scope ? { storeId: scope } : {}) },
           data: updateData,
           include: {
             lead: {
@@ -317,9 +328,17 @@ export async function appointmentRoutes(fastify: FastifyInstance) {
       try {
         const { id } = request.params as { id: string };
 
-        // Atualizar status para cancelado ao invés de deletar
+        // Cancelamento no CRM Eurovia apenas; nunca no Syonet.
+        const scope = storeIdFilter(request.authUser);
+        const visible = await fastify.prisma.appointment.findFirst({
+          where: { id, storeId: scope },
+          select: { id: true },
+        });
+        if (!visible) return reply.status(404).send({
+          success: false, error: 'Agendamento não encontrado',
+        });
         const appointment = await fastify.prisma.appointment.update({
-          where: { id },
+          where: { id, ...(scope ? { storeId: scope } : {}) },
           data: { status: 'CANCELLED' },
         });
 
@@ -373,6 +392,7 @@ export async function appointmentRoutes(fastify: FastifyInstance) {
       const appointments = await fastify.prisma.appointment.findMany({
         where: {
           lead: { assignedVlId: userId },
+          storeId: storeIdFilter(request.authUser),
           appointmentDate: {
             gte: today,
             lt: tomorrow,

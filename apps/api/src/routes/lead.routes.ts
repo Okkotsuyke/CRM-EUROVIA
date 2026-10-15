@@ -7,6 +7,7 @@
 import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { authenticate } from '../middleware/auth.middleware';
+import { storeIdFilter } from '../services/store-scope';
 import { attachAssignees } from '../services/lead-assignees';
 
 // ── Zod Schemas para validação de input ────────────────────────────────
@@ -48,9 +49,13 @@ export async function leadRoutes(fastify: FastifyInstance) {
     try {
       const query = querySchema.parse(request.query);
 
-      const where: any = {};
+      const where: any = {
+        storeId: storeIdFilter(request.authUser),
+      };
 
-      if (query.storeId) where.storeId = query.storeId;
+      if (query.storeId) {
+        where.storeId = storeIdFilter(request.authUser, [query.storeId]);
+      }
       if (query.vlUserId) where.assignedVlId = query.vlUserId;
       if (query.status) where.statusNormalized = query.status;
 
@@ -104,8 +109,8 @@ export async function leadRoutes(fastify: FastifyInstance) {
     try {
       const { id } = idParamSchema.parse(request.params);
 
-      const lead = await fastify.prisma.lead.findUnique({
-        where: { id },
+      const lead = await fastify.prisma.lead.findFirst({
+        where: { id, storeId: storeIdFilter(request.authUser) },
         include: {
           store: true,
           mediaSource: true,
@@ -153,6 +158,12 @@ export async function leadRoutes(fastify: FastifyInstance) {
       try {
         const { id } = idParamSchema.parse(request.params);
         const body = updateLeadBodySchema.parse(request.body);
+        const scope = storeIdFilter(request.authUser);
+        const visible = await fastify.prisma.lead.findFirst({
+          where: { id, storeId: scope },
+          select: { id: true },
+        });
+        if (!visible) return reply.status(404).send({ success: false, error: 'Lead não encontrado' });
 
         // Campos que podem ser atualizados
         const updateData: any = {};
@@ -166,7 +177,8 @@ export async function leadRoutes(fastify: FastifyInstance) {
         if (body.assignedBdcId !== undefined) updateData.assignedBdcId = body.assignedBdcId;
 
         const lead = await fastify.prisma.lead.update({
-          where: { id },
+          // Filtro tambem na mutacao evita corrida apos a verificacao.
+          where: { id, ...(scope ? { storeId: scope } : {}) },
           data: updateData,
           include: {
             store: true,
@@ -210,6 +222,11 @@ export async function leadRoutes(fastify: FastifyInstance) {
       try {
         const { id } = idParamSchema.parse(request.params);
         const body = createEventBodySchema.parse(request.body);
+        const visible = await fastify.prisma.lead.findFirst({
+          where: { id, storeId: storeIdFilter(request.authUser) },
+          select: { id: true },
+        });
+        if (!visible) return reply.status(404).send({ success: false, error: 'Lead não encontrado' });
 
         const event = await fastify.prisma.leadEvent.create({
           data: {
@@ -261,15 +278,16 @@ export async function leadRoutes(fastify: FastifyInstance) {
       tomorrow.setDate(tomorrow.getDate() + 1);
 
       const [total, byStatus, todayAppointments] = await Promise.all([
-        fastify.prisma.lead.count({ where: { assignedVlId: userId } }),
+        fastify.prisma.lead.count({ where: { assignedVlId: userId, storeId: storeIdFilter(request.authUser) } }),
         fastify.prisma.lead.groupBy({
           by: ['statusNormalized'],
-          where: { assignedVlId: userId },
+          where: { assignedVlId: userId, storeId: storeIdFilter(request.authUser) },
           _count: true,
         }),
         fastify.prisma.appointment.count({
           where: {
             lead: { assignedVlId: userId },
+            storeId: storeIdFilter(request.authUser),
             appointmentDate: {
               gte: today,
               lt: tomorrow,
