@@ -1,0 +1,69 @@
+name: CRM Eurovia - Homologacao RLS efemera
+
+on:
+  push:
+    branches: [fix/eurovia-hardening-deploy-20261015]
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'apps/api/prisma/schema.prisma'
+      - 'docs/security/eurovia-rls-firewall.sql'
+      - 'scripts/security/homologate-rls-ci.sh'
+      - '.github/workflows/rls-homologation.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rls:
+    name: PostgreSQL 17 - negar acesso publico
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci-only-postgres
+          POSTGRES_DB: eurovia_rls_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d eurovia_rls_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      NODE_ENV: test
+      SYONET_USE_REAL: 'false'
+      SYNC_ENABLED: 'false'
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGUSER: postgres
+      PGPASSWORD: ci-only-postgres
+      PGDATABASE: eurovia_rls_ci
+      CRM_EUROVIA_RLS_CI: '1'
+      DATABASE_URL: postgresql://postgres:ci-only-postgres@127.0.0.1:5432/eurovia_rls_ci?schema=public
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+      - name: Preparar cliente PostgreSQL
+        run: |
+          if ! command -v psql >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq postgresql-client
+          fi
+          psql --version
+      - name: Instalar dependencias fixas
+        run: pnpm install --frozen-lockfile
+      - name: Construir schema vazio do CRM no DB efemero
+        run: pnpm --filter @crm/api exec prisma db push --skip-generate
+      - name: Testar RLS, grants e acesso real por role
+        run: bash scripts/security/homologate-rls-ci.sh
