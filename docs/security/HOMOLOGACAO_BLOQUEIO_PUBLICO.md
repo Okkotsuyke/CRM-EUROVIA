@@ -74,3 +74,44 @@ inserção ou exclusão em qualquer recurso do sistema de origem.
 
 - https://supabase.com/docs/guides/api/securing-your-api
 - https://supabase.com/docs/guides/database/postgres/row-level-security
+
+## Homologação da camada HTTP PostgREST — APROVADA
+
+Execução verificada no GitHub Actions:
+https://github.com/Okkotsuyke/CRM-EUROVIA/actions/runs/38761902674
+
+- Resultado: SUCCESS na etapa PostgreSQL 17 + PostgREST 16.3.
+- Positivo: usuário técnico `service_role` **sintético** recebe HTTP 200 em /stores.
+- Negativo: GET nas 14 tabelas negado para `anon` e para JWT
+  `authenticated` sintético (HTTP 401/403).
+- Negativo: POST/PATCH/DELETE negados para ambos os papéis
+  (HTTP 401/403).
+- Integridade: fixture sintética `ci-loja-1` continua intacta e nenhuma
+  linha `ci-loja-2` é criada.
+- O script `scripts/security/homologate-postgrest-ci.sh` usa somente
+  `127.0.0.1`, contêiner PostgREST temporário, segredos de CI sem
+  valor externo e banco efêmero `eurovia_rls_ci`.
+- Logs do CI registram `HOMOLOGACAO POSTGREST LOCAL APROVADA`.
+
+**Limite da evidência:** PostgREST de teste não equivale à API gerenciada
+do Supabase (Kong, Auth, Storage, configuração do projeto). A
+homologação no Supabase hospedado permanece bloqueada.
+
+## Restrição de provisionamento Supabase
+
+Confirmado na organização de `crm-eurovia` o plano **Free**. Foram
+consultadas alternativas sem alterar produção:
+
+1. Branch de staging: preço informado US$ 0,01344/h (fora custos
+   adicionais). O Supabase recusou a criação porque Branching exige
+   o plano Pro ou superior. Nenhuma branch de staging foi criada.
+2. Novo projeto `crm-eurovia-staging-rls`: preço consultado US$ 0/mês,
+   mas criação recusada porque a organização atingiu o limite de
+   2 projetos Free. Nenhum projeto adicional foi criado.
+3. Não excluir, pausar ou modificar o projeto `mvp-creator` para
+   liberar cota. Não contratar plano pago sem aprovação específica.
+
+Somente após upgrade autorizado ou nova capacidade aprovada poderemos
+reproduzir estes testes no **Supabase gerenciado**. Até lá, o
+Security Advisor do projeto principal continua reportando tabelas com
+RLS desabilitada e a migração de produção não está aplicada.
