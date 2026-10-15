@@ -162,10 +162,24 @@ export async function buildApp() {
   });
 
   // ── Plugins ──────────────────────────────────────────────
+  // CORS sem dominio hardcoded: cada ambiente precisa declarar a origem
+  // aprovada. Nunca aceitar '*' com cookies/JWT.
+  const configuredOrigins = (process.env.CRM_ALLOWED_ORIGINS ?? '')
+    .split(',').map(origin => origin.trim()).filter(Boolean);
+  if (process.env.NODE_ENV === 'production') {
+    if (!configuredOrigins.length || configuredOrigins.some(origin => {
+      try {
+        const url = new URL(origin);
+        return url.origin !== origin || url.protocol !== 'https:';
+      } catch { return true; }
+    })) {
+      throw new Error('CRM_ALLOWED_ORIGINS deve conter origens HTTPS validas para a API');
+    }
+  }
   await fastify.register(cors, {
     origin: process.env.NODE_ENV === 'production'
-      ? ['https://crm.eurovia.com.br']
-      : ['http://localhost:3000'],
+      ? configuredOrigins
+      : ['http://localhost:3000', ...configuredOrigins],
     credentials: true,
   });
 
@@ -191,8 +205,8 @@ export async function buildApp() {
   }
 
   // Validação específica do JWT_SECRET
-  if (!process.env.JWT_SECRET) {
-    throw new Error('JWT_SECRET environment variable is required');
+  if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
+    throw new Error('JWT_SECRET forte (minimo 32 caracteres) e obrigatorio');
   }
 
   await fastify.register(jwt, {
@@ -244,12 +258,14 @@ export async function buildApp() {
       });
     }
 
-    // Erros genéricos
-    const statusCode = error.statusCode ?? 500;
+    // Falhas internas nao devem expor mensagens de bancos, URLs ou
+    // detalhes de integracoes externas para o cliente.
+    const statusCode = error.statusCode && error.statusCode >= 400 && error.statusCode < 500
+      ? error.statusCode : 500;
     return reply.status(statusCode).send({
       statusCode,
-      message: error.message ?? 'Internal Server Error',
-      error: error.name,
+      message: statusCode >= 500 ? 'Internal Server Error' : error.message,
+      error: statusCode >= 500 ? 'Internal Server Error' : error.name,
     });
   });
 
@@ -268,19 +284,19 @@ export async function buildApp() {
       request.log.error({ error }, 'Health check: DB connection failed');
     }
 
-    return {
-      status: dbStatus === 'connected' ? 'ok' : 'degraded',
+    const healthy = dbStatus === 'connected';
+    return reply.status(healthy ? 200 : 503).send({
+      status: healthy ? 'ok' : 'degraded',
+      service: 'crm-eurovia-api',
       timestamp: new Date().toISOString(),
-      version: process.env.npm_package_version ?? '0.1.0',
-      environment: process.env.NODE_ENV ?? 'development',
       integrations: {
         database: dbStatus,
-        dbLatency: dbLatency,
+        dbLatency,
       },
-    };
+    });
   });
 
-  // ── Cron Jobs (sem autenticação - verificado pela Vercel) ──
+  // ── Cron Jobs (CRON_SECRET verificado em cron.routes.ts) ──
   await fastify.register(cronRoutes, { prefix: '/api/cron' });
 
   // Decorar para uso nos route files — ANTES de registrar rotas que usam auth

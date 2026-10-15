@@ -18,11 +18,11 @@ async function prismaPluginInner(fastify: FastifyInstance) {
     return;
   }
 
-  // Configurar URL do banco - usar E3_POSTGRES_URL se DATABASE_URL não estiver disponível
-  const databaseUrl = process.env.DATABASE_URL || process.env.E3_POSTGRES_URL;
-
+  // Fail-closed: nunca conectar silenciosamente a banco de outro projeto.
+  // DATABASE_URL deve apontar exclusivamente ao Supabase CRM EUROVIA.
+  const databaseUrl = process.env.DATABASE_URL;
   if (!databaseUrl) {
-    throw new Error('DATABASE_URL or E3_POSTGRES_URL environment variable is required');
+    throw new Error('DATABASE_URL da API CRM EUROVIA nao configurada');
   }
 
   const prisma = new PrismaClient({
