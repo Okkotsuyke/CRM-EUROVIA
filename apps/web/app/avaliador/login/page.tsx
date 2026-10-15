@@ -16,7 +16,7 @@ export default function AvaliadorLoginPage() {
     setLoading(true);
 
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/dashboard/auth/login`, {
+      const res = await fetch('/api/avaliador/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, password }),
