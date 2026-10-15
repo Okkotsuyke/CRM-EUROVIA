@@ -331,18 +331,10 @@ export async function extractFunilData(config: SyonetRealConfig, filters?: {
   try {
     console.log('📊 Syonet: Extraindo métricas do Funil via API...');
 
-    // IDs das empresas de interesse (FIAT/VIASUL e BYD)
-    const targetEmpresaIds = filters?.empresaIds || [
-      71,   // VIASUL PIEDADE - PE (FIAT)
-      72,   // VIASUL ARRUDA - PE (FIAT)
-      75,   // VIASUL DUNAS - CE (FIAT)
-      91,   // BYD ARRUDA - PE (BYD)
-      92,   // BYD CAMINHO DAS ARVORES - BA (BYD)
-      102,  // BYD WASHINGTON SOARES - CE (BYD)
-    ];
-
-    // Primeiro, obter lista de empresas para mapear IDs para nomes
-    const empresasMap = new Map<number, { nome: string; apelido: string }>();
+    // A lista de empresas deve vir do proprio Syonet. O fallback fixo anterior
+    // podia omitir lojas novas ou consultar lojas fora do escopo da conta.
+    const empresasMap = new Map<number, { nome: string; apelido: string; ativo: boolean }>();
+    let empresasAtivas: number[] = [];
 
     try {
       const empresasResponse = await apiRequest(page, '/api/empresa');
@@ -352,16 +344,36 @@ export async function extractFunilData(config: SyonetRealConfig, filters?: {
           : empresasResponse.data.content || [];
 
         for (const emp of empresasList) {
-          empresasMap.set(emp.idEmpresa, {
-            nome: emp.nome || emp.apelido || `Empresa ${emp.idEmpresa}`,
-            apelido: emp.apelido || emp.nome || `Emp ${emp.idEmpresa}`,
+          const id = Number(emp.idEmpresa ?? emp.id);
+          if (!Number.isInteger(id)) continue;
+          empresasMap.set(id, {
+            nome: emp.nome || emp.apelido || `Empresa ${id}`,
+            apelido: emp.apelido || emp.nome || `Emp ${id}`,
+            ativo: emp.ativo !== false,
           });
         }
-        console.log(`✅ Mapeadas ${empresasMap.size} empresas`);
+
+        const mappedIds = new Set(Object.values(STORE_MAPPING)
+          .map(v => v.syonetId)
+          .filter((id): id is number => Number.isInteger(id)));
+
+        empresasAtivas = [...empresasMap.entries()]
+          .filter(([id, emp]) => emp.ativo && mappedIds.has(id))
+          .map(([id]) => id)
+          .sort((a, b) => a - b);
+
+        console.log(`✅ Mapeadas ${empresasMap.size} empresas; ${empresasAtivas.length} lojas Eurovia no escopo`);
       }
     } catch (err) {
       console.warn('⚠️ Erro ao obter lista de empresas:', err);
     }
+
+    const targetEmpresaIds = filters?.empresaIds
+      ?? (empresasAtivas.length > 0
+        ? empresasAtivas
+        : Object.values(STORE_MAPPING)
+            .map(v => v.syonetId)
+            .filter((id): id is number => Number.isInteger(id)));
 
     // Para cada empresa de interesse, extrair métricas do dashboard 189
     for (const empresaId of targetEmpresaIds) {
@@ -369,7 +381,10 @@ export async function extractFunilData(config: SyonetRealConfig, filters?: {
         console.log(`📍 Processando empresa ID ${empresaId}...`);
 
         // Chamar o dashboard 189 (Incluidos / Agendados / Comparecidos / Vendas)
-        const dashboardUrl = `/api/dashboard/189?empresa=${empresaId}`;
+        const dashboardParams = new URLSearchParams({ empresa: String(empresaId) });
+        if (filters?.dataInicio) dashboardParams.set('dataInicio', filters.dataInicio);
+        if (filters?.dataFim) dashboardParams.set('dataFim', filters.dataFim);
+        const dashboardUrl = `/api/dashboard/189?${dashboardParams.toString()}`;
         const dashboardResponse = await apiRequest(page, dashboardUrl);
 
         if (dashboardResponse.status !== 200) {
@@ -471,7 +486,10 @@ export async function extractFunilData(config: SyonetRealConfig, filters?: {
         // Se não conseguimos dados do dashboard, tentar endpoint de funil direto
         if (metric.leadsTotal === 0 && metric.appointmentsTotal === 0) {
           try {
-            const funilResponse = await apiRequest(page, `/api/funil?empresa=${empresaId}`);
+            const funilParams = new URLSearchParams({ empresa: String(empresaId) });
+            if (filters?.dataInicio) funilParams.set('dataInicio', filters.dataInicio);
+            if (filters?.dataFim) funilParams.set('dataFim', filters.dataFim);
+            const funilResponse = await apiRequest(page, `/api/funil?${funilParams.toString()}`);
             if (funilResponse.status === 200 && funilResponse.data) {
               const funilData = funilResponse.data;
 
