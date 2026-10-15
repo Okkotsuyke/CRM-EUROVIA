@@ -1,4 +1,4 @@
-# CRM EUROVIA — Preparacao de migracao Supabase → Neon
+# CRM EUROVIA — Migração Supabase → Neon (staging configurado)
 Data: 2026-10-15
 Escopo: SOMENTE CRM Eurovia; Syonet estritamente somente leitura.
 
@@ -19,20 +19,17 @@ Escopo: SOMENTE CRM Eurovia; Syonet estritamente somente leitura.
 3. Criada branch de staging a partir do main vazio.
 4. Consultados explicitamente (com project_id, branch_id e database_name)
    staging e main: ambos PostgreSQL 17.11, sem tabelas de negocio.
-5. NENHUM SQL de schema/DML/DDL executado no main/staging.
+5. Schema Prisma e RLS agora INSTALADOS e TESTADOS exclusivamente no staging; Neon main continua VAZIO.
 6. Nenhum ambiente Vercel alterado e nenhum segredo importado.
 7. Nenhuma chamada ao Syonet; nenhum recurso de outro projeto modificado.
 
-## Bloqueios antes de implementar schema no staging
+## Bloqueios antes de conectar aplicação ou fazer deploy
 - O schema Prisma do GitHub e divergente do PostgreSQL Supabase atual.
 - Guardar exportacao do schema legado em backup seguro, sem segredos.
-- Estabelecer Prisma como fonte canonica e testar migrate deploy/db push
-  APENAS na branch staging Neon `br-bold-sun-b6p0nkhp`.
-- Criar roles de runtime de minimo privilegio, sem propriedade de tabelas,
-  SUPERUSER ou BYPASSRLS.
-- Adaptar arquivo `docs/security/eurovia-rls-firewall.sql`:
-  `anon` e `authenticated` sao roles Supabase e nao existem
-  automaticamente no Neon. Evitar repetir GRANTs inseguros.
+- Schema canônico Prisma e RLS foram instalados na staging Neon `br-bold-sun-b6p0nkhp`.
+- Homologação funcional detalhada: `docs/security/NEON_STAGING_RLS_RESULTADO_2026-10-15.md`.
+- Role `crm_eurovia_runtime` já criada sem LOGIN, SUPERUSER ou BYPASSRLS; integrar credenciais runtime separadas antes de conectar API.
+- A política Neon específica está versionada em `apps/api/prisma/migrations/20261015_neon_rls_scope/migration.sql`; não executar o SQL legado Supabase contra Neon.
 - Separar conta migradora (DDL) da conta API (DML) e usar RLS/escopo de loja
   setado em transacao. Testar falta de contexto como deny-by-default.
 - Desativar ou nao provisionar Neon Data API diretamente para browser

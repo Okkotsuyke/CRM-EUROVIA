@@ -6,6 +6,7 @@ on:
     paths:
       - '.github/workflows/neon-canonical-ddl.yml'
       - 'apps/api/prisma/schema.prisma'
+      - 'apps/api/prisma/migrations/**'
   workflow_dispatch:
 
 permissions:
@@ -46,6 +47,13 @@ jobs:
           actual="$(grep -Ec '^CREATE TABLE ' eurovia-canonical.sql)"
           if [[ "$actual" != "$expected" ]]; then
             echo "Esperadas 14 tabelas; encontradas $actual"; exit 1
+          fi
+          awk '/^-- CreateEnum/{copy=1}copy' \
+            apps/api/prisma/migrations/20261015_neon_canonical_init/migration.sql \
+            > eurovia-canonical-committed.sql
+          if ! cmp -s eurovia-canonical.sql eurovia-canonical-committed.sql; then
+            echo "MIGRATION DRIFT: versao do Prisma diverge da migration inicial"
+            exit 1
           fi
           echo "CANONICAL_DDL_SHA256: $(sha256sum eurovia-canonical.sql | cut -d' ' -f1)"
           echo "CANONICAL_DDL_TABLES: $actual"
