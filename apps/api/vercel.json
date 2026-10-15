@@ -1,15 +1,13 @@
 {
   "version": 2,
-  "buildCommand": "pnpm turbo build --filter=@crm/api",
-  "installCommand": "pnpm install",
   "framework": null,
-  "outputDirectory": "dist",
+  "installCommand": "pnpm install --frozen-lockfile",
+  "buildCommand": "pnpm --filter @crm/api build",
   "functions": {
-    "api/index.ts": { "maxDuration": 300 }
+    "api/index.ts": { "maxDuration": 60 }
   },
   "regions": ["gru1"],
-  "crons": [
-    { "path": "/api/cron/sync", "schedule": "*/15 * * * *" },
-    { "path": "/api/cron/health", "schedule": "*/15 * * * *" }
+  "rewrites": [
+    { "source": "/(.*)", "destination": "/api/index" }
   ]
 }

@@ -8,6 +8,7 @@ import jwt from '@fastify/jwt';
 import multipart from '@fastify/multipart';
 import rateLimit from '@fastify/rate-limit';
 import { prismaPlugin } from './plugins/prisma.plugin';
+import { checkNeonStagingReadiness } from './services/neon-staging';
 import sentryPlugin from './plugins/sentry.plugin';
 import { authRoutes } from './routes/auth.routes';
 import { storeRoutes } from './routes/store.routes';
@@ -227,6 +228,20 @@ export async function buildApp() {
   await fastify.register(prismaPlugin);
   await fastify.register(sentryPlugin);
 
+  // Neon preview uses a narrowly-scoped SQL role. Do not allow business
+  // routes to use Prisma without authenticated transaction-scoped RLS
+  // until Fastify's auth adapter has been migrated and tested.
+  if (process.env.CRM_NEON_STAGING_MODE === 'true') {
+    fastify.addHook('onRequest', async (request, reply) => {
+      if (request.url.split('?')[0] !== '/health') {
+        return reply.status(503).send({
+          status: 'staging_security_gate',
+          message: 'Business routes disabled pending Neon RLS transactional integration',
+        });
+      }
+    });
+  }
+
   // ── Error handler global ──────────────────────────────────────
   fastify.setErrorHandler((error, request, reply) => {
     request.log.error(error);
@@ -277,7 +292,11 @@ export async function buildApp() {
     try {
       const start = Date.now();
       if (!fastify.prisma) throw new Error('Prisma not initialized');
-      await fastify.prisma.$queryRaw`SELECT 1`;
+      if (process.env.CRM_NEON_STAGING_MODE === 'true') {
+        await checkNeonStagingReadiness(fastify.prisma);
+      } else {
+        await fastify.prisma.$queryRaw`SELECT 1`;
+      }
       dbLatency = Date.now() - start;
       dbStatus = 'connected';
     } catch (error) {
