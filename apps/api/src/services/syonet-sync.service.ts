@@ -204,9 +204,14 @@ async function syncFunilMetrics(batchId: string): Promise<{ processed: number; e
 
     for (const metric of metrics) {
       try {
-        const storeId = await getStoreId(metric.storeName);
+        const syonetId = Number(String(metric.storeId).replace(/^syonet_/, ''));
+        const mappedStore = Number.isInteger(syonetId)
+          ? Object.values(STORE_MAPPING).find(mapping => mapping.syonetId === syonetId)
+          : undefined;
+        const canonicalStoreName = mappedStore?.syonetName ?? metric.storeName;
+        const storeId = await getStoreId(canonicalStoreName);
         if (!storeId) {
-          errors.push(`Loja não encontrada: ${metric.storeName}`);
+          errors.push(`Loja não encontrada no escopo Eurovia: ${canonicalStoreName}`);
           continue;
         }
 
@@ -412,10 +417,23 @@ async function syncLeads(batchId: string, dateRange?: { start: Date; end: Date }
 
   try {
     console.log('📊 Sync: Iniciando sincronização de Leads...');
-    const client = getSyonetClient();
+    let leads: LeadData[];
 
-    // Extrair leads do Syonet
-    const leads = await client.extractLeads(dateRange);
+    if (USE_REAL_CLIENT) {
+      const realClient = getSyonetRealClient();
+      const logged = await realClient.login();
+      if (!logged) {
+        throw new Error('Falha ao autenticar no Syonet');
+      }
+      try {
+        leads = await realClient.extractLeads(dateRange);
+      } finally {
+        await realClient.logout();
+      }
+    } else {
+      const client = getSyonetClient();
+      leads = await client.extractLeads(dateRange);
+    }
 
     for (const lead of leads) {
       try {
