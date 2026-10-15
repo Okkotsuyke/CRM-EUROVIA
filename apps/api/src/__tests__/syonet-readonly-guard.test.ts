@@ -17,7 +17,7 @@ describe('politica imutavel de somente leitura Syonet', () => {
   it('permite somente o POST exato do formulario de login do portal', () => {
     expect(checkSyonetReadOnlyRequest(base + '/portal/app.do?modulo=login', 'POST', base).allowed).toBe(true);
     expect(checkSyonetReadOnlyRequest(base + '/portal/app.do?modulo=login', 'POST', base).reason).toBe('read-only-login');
-    expect(checkSyonetReadOnlyRequest(base + '/portal/app.do?modulo=login&acao=excluir', 'POST', base).allowed).toBe(true);
+    expect(checkSyonetReadOnlyRequest(base + '/portal/app.do?modulo=login&acao=excluir', 'POST', base).allowed).toBe(false);
     expect(checkSyonetReadOnlyRequest(base + '/api/login', 'POST', base).allowed).toBe(false);
     expect(checkSyonetReadOnlyRequest(base + '/api/empresa', 'POST', base).allowed).toBe(false);
   });
