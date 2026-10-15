@@ -30,7 +30,6 @@
 
 import { chromium as playwrightChromium, Browser, Page, BrowserContext } from 'playwright-core';
 import serverlessChromium from '@sparticuz/chromium';
-import { randomUUID } from 'node:crypto';
 import { assertSyonetReadOnlyRequest, installSyonetReadOnlyGuard } from './syonet-readonly-guard';
 import {
   normalizeMedia,
@@ -89,13 +88,11 @@ async function getBrowser(config: SyonetRealConfig): Promise<Browser> {
   if (!browserInstance || !browserInstance.isConnected()) {
     console.log('🔧 Syonet: Iniciando navegador...');
     const isVercel = process.env.VERCEL === '1' || Boolean(process.env.VERCEL_ENV);
-    const userDataDir = '/tmp/syonet-pw-' + randomUUID();
-
     if (isVercel) {
       serverlessChromium.setGraphicsMode = false;
       browserInstance = await playwrightChromium.launch({
         headless: true,
-        args: [...serverlessChromium.args, '--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--user-data-dir=' + userDataDir],
+        args: [...serverlessChromium.args, '--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
         executablePath: await serverlessChromium.executablePath(),
       });
     } else {
