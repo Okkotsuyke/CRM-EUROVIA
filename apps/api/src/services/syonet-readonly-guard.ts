@@ -39,6 +39,7 @@ export function checkSyonetReadOnlyRequest(
   const isApprovedLoginPost =
     normalizedMethod === 'POST' &&
     destination.pathname.toLowerCase() === LOGIN_PATH &&
+    destination.searchParams.size === 1 &&
     destination.searchParams.get('modulo')?.toLowerCase() === 'login';
 
   if (!READ_METHODS.has(normalizedMethod) && !isApprovedLoginPost) {
