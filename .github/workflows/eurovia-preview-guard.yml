@@ -1,0 +1,36 @@
+name: CRM Eurovia - Preview Isolation Guard
+on:
+  push:
+    branches: [fix/eurovia-hardening-deploy-20261015]
+    paths:
+      - 'turbo.json'
+      - 'apps/web/next.config.js'
+      - 'apps/web/middleware.ts'
+      - 'apps/web/app/avaliador/login/page.tsx'
+      - 'scripts/security/eurovia-preview-guard.test.cjs'
+      - '.github/workflows/eurovia-preview-guard.yml'
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'turbo.json'
+      - 'apps/web/next.config.js'
+      - 'apps/web/middleware.ts'
+      - 'apps/web/app/avaliador/login/page.tsx'
+      - 'scripts/security/eurovia-preview-guard.test.cjs'
+      - '.github/workflows/eurovia-preview-guard.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate-preview-target:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Validate preview target and reject cross-project credentials
+        run: node scripts/security/eurovia-preview-guard.test.cjs
