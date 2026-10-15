@@ -1,4 +1,7 @@
-name: CI/CD
+name: CI - CRM Eurovia (sem deploy automatico)
+
+permissions:
+  contents: read
 
 on:
   push:
@@ -23,7 +26,7 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      - run: pnpm install
+      - run: pnpm install --frozen-lockfile
       - run: pnpm turbo lint
 
   test-api:
@@ -43,7 +46,7 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      - run: pnpm install
+      - run: pnpm install --frozen-lockfile
       - working-directory: apps/api
         run: pnpm prisma:generate
       - working-directory: apps/api
@@ -65,57 +68,6 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      - run: pnpm install
+      - run: pnpm install --frozen-lockfile
       - run: pnpm turbo build
 
-  deploy-preview:
-    name: Deploy Preview
-    needs: [build]
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 9
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install
-      - run: pnpm turbo build --filter=@crm/web
-      - uses: actions/download-artifact@v4
-        with:
-          name: vercel-build-output
-          path: .vercel/output
-        continue-on-error: true
-      - name: Deploy to Vercel (Preview)
-        env:
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-          VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
-          VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
-        run: pnpm vercel deploy --yes --token=$VERCEL_TOKEN
-
-  deploy-production:
-    name: Deploy Production
-    needs: [build]
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    runs-on: ubuntu-latest
-    environment: production
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 9
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install
-      - run: pnpm turbo build --filter=@crm/web
-      - name: Deploy to Vercel (Production)
-        env:
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-          VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
-          VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
-        run: pnpm vercel deploy --yes --prod --token=$VERCEL_TOKEN

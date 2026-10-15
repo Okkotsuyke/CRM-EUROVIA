@@ -1,26 +1,20 @@
 import { NextResponse } from 'next/server';
 
 export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
 
+/**
+ * Liveness probe do frontend. Não revela se segredos estão configurados.
+ * Readiness e saúde das integrações devem ser testadas em endpoint
+ * próprio, autenticado e sem dados sensíveis.
+ */
 export async function GET() {
-  const integrations = {
-    supabase: !!process.env.NEXT_PUBLIC_SUPABASE_URL,
-    supabaseAdmin: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
-    sentry: !!process.env.SENTRY_DSN,
-    resend: !!process.env.RESEND_API_KEY,
-    cloudflare: !!process.env.CLOUDFLARE_API_TOKEN,
-    appUrl: !!process.env.NEXT_PUBLIC_APP_URL,
-  };
-
-  const allHealthy = Object.values(integrations).every(Boolean);
-
-  return NextResponse.json({
-    status: allHealthy ? 'ok' : 'degraded',
-    version: process.env.npm_package_version || '1.0.0',
-    environment: process.env.NODE_ENV || 'production',
-    integrations,
-    timestamp: new Date().toISOString(),
-  }, {
-    status: allHealthy ? 200 : 503,
-  });
+  return NextResponse.json(
+    {
+      status: 'ok',
+      service: 'crm-eurovia-web',
+      timestamp: new Date().toISOString(),
+    },
+    { status: 200, headers: { 'Cache-Control': 'no-store' } },
+  );
 }
