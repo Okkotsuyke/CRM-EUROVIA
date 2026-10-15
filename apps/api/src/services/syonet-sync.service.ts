@@ -21,6 +21,7 @@ import {
   LeadData,
   normalizeMedia,
   normalizeLeadStatus,
+  STORE_MAPPING,
   SyncResult
 } from './syonet-client';
 
