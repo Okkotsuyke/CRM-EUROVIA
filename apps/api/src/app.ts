@@ -240,7 +240,11 @@ export async function buildApp() {
           path === '/api/v1/auth/me' ||
           path === '/api/v1/dashboard/auth/me' ||
           path === '/api/v1/stores' ||
-          path.startsWith('/api/v1/stores/')
+          path.startsWith('/api/v1/stores/') ||
+          path === '/api/v1/leads' ||
+          /^\/api\/v1\/leads\/[a-zA-Z0-9_-]{6,128}$/.test(path) ||
+          path === '/api/v1/appointments' ||
+          /^\/api\/v1\/appointments\/[a-zA-Z0-9_-]{6,128}$/.test(path)
         )) ||
         (method === 'POST' && (
           path === '/api/v1/auth/login' ||
