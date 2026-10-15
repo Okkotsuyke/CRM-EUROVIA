@@ -6,9 +6,8 @@
 
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import bcrypt from 'bcryptjs';
-import { PrismaClient } from '@prisma/client';
+import { authenticateDashboard } from '../middleware/auth.middleware';
 
-const prisma = new PrismaClient();
 
 interface LoginBody {
   username: string;
@@ -33,7 +32,7 @@ export async function dashboardAuthRoutes(fastify: FastifyInstance) {
       }
 
       // Buscar usuário no banco
-      const user = await prisma.dashboardUser.findUnique({
+      const user = await fastify.prisma.dashboardUser.findUnique({
         where: { username },
       });
 
@@ -89,51 +88,17 @@ export async function dashboardAuthRoutes(fastify: FastifyInstance) {
 
   /**
    * GET /api/v1/dashboard/auth/me
-   * Retorna informações do usuário logado
+   * Revalida usuario ativo, role e lojas no PostgreSQL (nunca pelo JWT).
    */
-  fastify.get('/me', async (request, reply) => {
-    try {
-      const token = request.headers.authorization?.replace('Bearer ', '');
-      if (!token) {
-        return reply.status(401).send({
-          success: false,
-          error: 'Token não fornecido',
-        });
-      }
-
-      let decoded: any;
-      try {
-        decoded = fastify.jwt.verify(token);
-      } catch {
-        return reply.status(401).send({
-          success: false,
-          error: 'Token inválido ou expirado',
-        });
-      }
-
-      if (decoded.type !== 'dashboard') {
-        return reply.status(401).send({
-          success: false,
-          error: 'Token inválido para dashboard',
-        });
-      }
-
-      return {
-        success: true,
-        data: {
-          id: decoded.id,
-          username: decoded.username,
-          name: decoded.name,
-          role: decoded.role,
-        },
-      };
-    } catch (error) {
-      fastify.log.error(error);
-      return reply.status(500).send({
-        success: false,
-        error: 'Erro ao verificar token',
-      });
-    }
+  fastify.get('/me', { onRequest: authenticateDashboard }, async (request) => {
+    const user = request.dashboardUser;
+    return {
+      success: true,
+      data: {
+        id: user.id, username: user.username, name: user.name,
+        role: user.role, allowedStores: user.allowedStores,
+      },
+    };
   });
 
   /**
