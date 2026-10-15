@@ -10,6 +10,9 @@ assert.ok(vars.includes('CRM_EUROVIA_PREVIEW_ONLY'), 'Turbo must forward preview
 assert.ok(vars.includes('NEXT_PUBLIC_API_URL'), 'Turbo must forward explicit API host');
 
 const target = 'https://crm-eurovia-o4hk341kc-maykengld-9931.vercel.app';
+const webVercel = JSON.parse(fs.readFileSync(path.join(root, 'apps/web/vercel.json'), 'utf8'));
+assert.equal(webVercel.git?.deploymentEnabled?.['fix/eurovia-hardening-deploy-20261015'], false,
+  'CRM Eurovia preview branch must require manual deploy after CI');
 const configPath = path.join(root, 'apps/web/next.config.js');
 const keys = [
   'CRM_EUROVIA_PREVIEW_ONLY',

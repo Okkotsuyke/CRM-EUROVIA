@@ -5,6 +5,7 @@ on:
     paths:
       - 'turbo.json'
       - 'apps/web/next.config.js'
+      - 'apps/web/vercel.json'
       - 'apps/web/middleware.ts'
       - 'apps/web/app/avaliador/login/page.tsx'
       - 'scripts/security/eurovia-preview-guard.test.cjs'
@@ -14,6 +15,7 @@ on:
     paths:
       - 'turbo.json'
       - 'apps/web/next.config.js'
+      - 'apps/web/vercel.json'
       - 'apps/web/middleware.ts'
       - 'apps/web/app/avaliador/login/page.tsx'
       - 'scripts/security/eurovia-preview-guard.test.cjs'

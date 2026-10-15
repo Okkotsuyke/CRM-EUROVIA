@@ -4,5 +4,12 @@
   "installCommand": "cd ../.. && pnpm install",
   "framework": "nextjs",
   "outputDirectory": ".next",
-  "regions": ["gru1"]
+  "regions": [
+    "gru1"
+  ],
+  "git": {
+    "deploymentEnabled": {
+      "fix/eurovia-hardening-deploy-20261015": false
+    }
+  }
 }
