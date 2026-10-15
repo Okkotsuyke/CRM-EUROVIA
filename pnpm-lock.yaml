@@ -63,9 +63,12 @@ importers:
       pino-pretty:
         specifier: ^11.2.2
         version: 11.3.0
-      playwright:
-        specifier: ^1.64.0
-        version: 1.64.0
+      '@sparticuz/chromium':
+        specifier: 153.0.0
+        version: 153.0.0
+      playwright-core:
+        specifier: 1.63.0
+        version: 1.63.0
       zod:
         specifier: ^3.24.0
         version: 3.25.76
