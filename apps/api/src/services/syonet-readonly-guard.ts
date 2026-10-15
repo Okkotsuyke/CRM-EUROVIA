@@ -10,7 +10,7 @@
  * efeitos colaterais tambem precisam ser barrados; por isso URLs de
  * API nao explicitamente permitidas sao negadas.
  */
-import type { BrowserContext } from 'playwright';
+import type { BrowserContext } from 'playwright-core';
 
 export type ReadOnlyDecision = { allowed: boolean; reason: string };
 const READ_METHODS = new Set(['GET', 'HEAD']);
