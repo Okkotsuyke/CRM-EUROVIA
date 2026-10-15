@@ -839,47 +839,84 @@ export async function extractLeadsData(
   try {
     console.log('📊 Syonet: Extraindo leads via API...');
 
-    // Primeiro, obter lista de empresas
+
+    // Primeiro, obter a lista real de empresas. Nenhum cadastro e alterado.
     let empresaIds: number[] = [];
+    const empresaNames = new Map<number, string>();
     try {
       const empresasResponse = await apiRequest(page, '/api/empresa');
       if (empresasResponse.status === 200 && empresasResponse.data) {
-        const empresas: any[] = Array.isArray(empresasResponse.data) ? empresasResponse.data : [];
-        empresaIds = empresas
-          .filter((e) => e.ativo)
-          .map((e) => e.idEmpresa)
-          .filter((id): id is number => id !== undefined);
-        console.log(`   Empresas ativas: ${empresaIds.length}`);
+        const empresas: any[] = Array.isArray(empresasResponse.data)
+          ? empresasResponse.data
+          : empresasResponse.data.content || [];
+
+        const mappedIds = new Set(Object.values(STORE_MAPPING)
+          .map(v => v.syonetId)
+          .filter((id): id is number => Number.isInteger(id)));
+
+        for (const empresa of empresas) {
+          const id = Number(empresa.idEmpresa ?? empresa.id);
+          if (!Number.isInteger(id) || empresa.ativo === false || !mappedIds.has(id)) continue;
+          empresaIds.push(id);
+          empresaNames.set(id, empresa.nome || empresa.apelido || ('Empresa ' + id));
+        }
+        empresaIds.sort((a, b) => a - b);
+        console.log('   Empresas Eurovia ativas no Syonet: ' + empresaIds.length);
       }
     } catch (err) {
-      console.warn('⚠️ Erro ao obter empresas:', err);
+      console.warn('Erro ao obter empresas:', err);
     }
 
-    // Se não temos empresas, usar mapeamento fixo
     if (empresaIds.length === 0) {
-      empresaIds = Object.values(STORE_MAPPING).map((v) => v.syonetId).filter((id): id is number => id !== undefined);
-      console.log(`   Usando mapeamento fixo: ${empresaIds.length} empresas`);
+      empresaIds = Object.values(STORE_MAPPING)
+        .map(v => v.syonetId)
+        .filter((id): id is number => Number.isInteger(id));
+      for (const mapping of Object.values(STORE_MAPPING)) {
+        if (mapping.syonetId && !empresaNames.has(mapping.syonetId)) {
+          empresaNames.set(mapping.syonetId, mapping.syonetName);
+        }
+      }
     }
 
-    // Buscar eventos de cada empresa
+    const storeNameBySyonetId = new Map<number, string>(
+      Object.entries(STORE_MAPPING)
+        .filter(([, mapping]) => Number.isInteger(mapping.syonetId))
+        .map(([storeName, mapping]) => [mapping.syonetId as number, storeName])
+    );
+
+    // Buscar eventos de cada empresa com paginacao completa. Todas as chamadas
+    // passam pelo guard imutavel e sao exclusivamente GET.
+    const PAGE_SIZE = 200;
+    const MAX_PAGES_PER_STORE = 100;
+
     for (const empresaId of empresaIds) {
       try {
-        // CORRIGIDO: Usar endpoint correto /api/evento?idEmpresa={id}
-        const response = await apiRequest(page, `/api/evento?idEmpresa=${empresaId}&page=0&size=200`);
+        for (let pageNumber = 0; pageNumber < MAX_PAGES_PER_STORE; pageNumber++) {
+          const response = await apiRequest(
+            page,
+            '/api/evento?idEmpresa=' + empresaId + '&page=' + pageNumber + '&size=' + PAGE_SIZE
+          );
 
-        if (response.status === 200 && response.data) {
-          const items: any[] = Array.isArray(response.data) ? response.data : [];
+          if (response.status !== 200 || !response.data) break;
 
-          if (items.length === 0) continue;
+          const items: any[] = Array.isArray(response.data)
+            ? response.data
+            : response.data.content || response.data.items || [];
 
-          console.log(`   Empresa ${empresaId}: ${items.length} eventos`);
+          if (items.length === 0) break;
+
+          console.log('   Empresa ' + empresaId + ', pagina ' + pageNumber + ': ' + items.length + ' eventos');
 
           for (const item of items) {
-            // Mapear campos do Syonet para LeadData
+            const resolvedStoreName =
+              storeNameBySyonetId.get(Number(item.idEmpresa ?? empresaId)) ||
+              empresaNames.get(empresaId) ||
+              ('Empresa ' + empresaId);
+
             const lead: LeadData = {
-              id: item.idEvento?.toString() || item.id?.toString() || `lead_${Date.now()}`,
+              id: item.idEvento?.toString() || item.id?.toString() || '',
               storeId: item.idEmpresa?.toString() || empresaId.toString(),
-              storeName: '',
+              storeName: resolvedStoreName,
               mediaRaw: item.midia?.dsMidia || item.midia?.label || item.midia || item.dsMidia || 'DESCONHECIDO',
               eventType: item.idTipoEvento || item.tipoEvento || item.grupoEvento || 'OPORTUNIDADE',
               receivedAt: new Date(item.dataInc || item.dtInc || Date.now()),
@@ -892,17 +929,17 @@ export async function extractLeadsData(
               assignedVsName: item.veiculo?.vendedor || '',
               assignedBdcId: undefined,
               department: item.idGrupoEvento || 'OPORTUNIDADE',
-              tipoVenda: item.veiculo?.marca ? `Seminovos ${item.veiculo.marca}` : 'Venda Seminovos',
+              tipoVenda: item.veiculo?.marca ? 'Seminovos ' + item.veiculo.marca : 'Venda Seminovos',
               vehicleModel: item.veiculo?.modelo,
               vehicleYear: item.veiculo?.anoFabricacao,
               vehicleBrand: item.veiculo?.marca,
             };
 
-            // Normalizar mídia
+            if (!lead.id) continue;
+
             const mediaNormalized = normalizeMedia(lead.mediaRaw);
             lead.mediaRaw = mediaNormalized.normalized;
 
-            // Filtrar por data se especificado
             if (dateRange) {
               const leadDate = lead.receivedAt.getTime();
               if (leadDate < dateRange.start.getTime() || leadDate > dateRange.end.getTime()) {
@@ -912,12 +949,13 @@ export async function extractLeadsData(
 
             leads.push(lead);
           }
+
+          if (items.length < PAGE_SIZE) break;
         }
       } catch (err) {
-        console.warn(`⚠️ Erro ao buscar eventos da empresa ${empresaId}:`, err);
+        console.warn('Erro ao buscar eventos da empresa ' + empresaId + ':', err);
       }
     }
-
     console.log(`✅ Total de leads extraídos: ${leads.length}`);
   } catch (error) {
     console.error('❌ Syonet: Erro ao extrair leads:', error);
