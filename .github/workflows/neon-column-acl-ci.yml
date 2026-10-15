@@ -1,0 +1,66 @@
+name: CRM Eurovia - Neon Sensitive Column ACL
+on:
+  push:
+    branches: [fix/eurovia-hardening-deploy-20261015]
+    paths:
+      - 'apps/api/prisma/migrations/20261015_neon_sensitive_column_acl/migration.sql'
+      - 'scripts/security/neon-column-acl-ci.sh'
+      - '.github/workflows/neon-column-acl-ci.yml'
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'apps/api/prisma/migrations/20261015_neon_sensitive_column_acl/migration.sql'
+      - 'scripts/security/neon-column-acl-ci.sh'
+      - '.github/workflows/neon-column-acl-ci.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  deny-raw-column-access:
+    name: PostgreSQL 17 - verify real column privilege denials
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci-only-neon-acl
+          POSTGRES_DB: crm_eurovia
+        ports: [5432:5432]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d crm_eurovia"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      CRM_EUROVIA_ACL_CI: '1'
+      NODE_ENV: test
+      SYONET_USE_REAL: 'false'
+      SYNC_ENABLED: 'false'
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGUSER: postgres
+      PGPASSWORD: ci-only-neon-acl
+      PGDATABASE: crm_eurovia
+      DATABASE_URL: postgresql://postgres:ci-only-neon-acl@127.0.0.1:5432/crm_eurovia?schema=public
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+      - name: PostgreSQL client
+        run: |
+          if ! command -v psql >/dev/null 2>&1; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+          fi
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Canonical schema in isolated database
+        run: pnpm --filter @crm/api exec prisma db push --skip-generate
+      - name: Exercise Neon ACL and deny raw Syonet payloads
+        run: bash scripts/security/neon-column-acl-ci.sh
