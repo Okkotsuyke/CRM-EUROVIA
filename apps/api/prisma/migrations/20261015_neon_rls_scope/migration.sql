@@ -37,6 +37,10 @@ ALTER DEFAULT PRIVILEGES FOR ROLE crm_eurovia_owner IN SCHEMA public REVOKE ALL 
 
 ALTER DEFAULT PRIVILEGES FOR ROLE crm_eurovia_owner IN SCHEMA public REVOKE ALL ON SEQUENCES FROM PUBLIC;
 
+-- Default EXECUTE for functions is granted to PUBLIC globally by Postgres.
+-- Per-schema REVOKE cannot cancel a global default: revoke globally first.
+ALTER DEFAULT PRIVILEGES FOR ROLE crm_eurovia_owner REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
+
 ALTER DEFAULT PRIVILEGES FOR ROLE crm_eurovia_owner IN SCHEMA public REVOKE ALL ON FUNCTIONS FROM PUBLIC;
 
 CREATE SCHEMA IF NOT EXISTS crm_security AUTHORIZATION crm_eurovia_owner;
