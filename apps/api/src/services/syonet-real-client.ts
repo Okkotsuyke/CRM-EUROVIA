@@ -378,7 +378,7 @@ export async function extractFunilData(config: SyonetRealConfig, filters?: {
         ? empresasAtivas
         : Object.values(STORE_MAPPING)
             .map(v => v.syonetId)
-            .filter((id): id is number => Number.isInteger(id)));
+            .filter((id): id is number => Number.isInteger(id) && CRM_PRODUCTION_SYONET_STORE_IDS.has(id)));
 
     // Para cada empresa de interesse, extrair métricas do dashboard 189
     for (const empresaId of targetEmpresaIds) {
@@ -875,7 +875,7 @@ export async function extractLeadsData(
     if (empresaIds.length === 0) {
       empresaIds = Object.values(STORE_MAPPING)
         .map(v => v.syonetId)
-        .filter((id): id is number => Number.isInteger(id));
+        .filter((id): id is number => Number.isInteger(id) && CRM_PRODUCTION_SYONET_STORE_IDS.has(id));
       for (const mapping of Object.values(STORE_MAPPING)) {
         if (mapping.syonetId && !empresaNames.has(mapping.syonetId)) {
           empresaNames.set(mapping.syonetId, mapping.syonetName);
