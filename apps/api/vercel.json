@@ -1,13 +1,20 @@
 {
   "version": 2,
   "framework": null,
-  "installCommand": "pnpm install --frozen-lockfile",
-  "buildCommand": "pnpm --filter @crm/api build",
+  "installCommand": "npx --yes pnpm@9.0.0 install --frozen-lockfile",
+  "buildCommand": "npx --yes pnpm@9.0.0 --filter @crm/api build",
   "functions": {
-    "api/index.ts": { "maxDuration": 60 }
+    "api/index.ts": {
+      "maxDuration": 60
+    }
   },
-  "regions": ["gru1"],
+  "regions": [
+    "gru1"
+  ],
   "rewrites": [
-    { "source": "/(.*)", "destination": "/api/index" }
+    {
+      "source": "/(.*)",
+      "destination": "/api/index"
+    }
   ]
 }
