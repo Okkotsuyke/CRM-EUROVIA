@@ -228,17 +228,30 @@ export async function buildApp() {
   await fastify.register(prismaPlugin);
   await fastify.register(sentryPlugin);
 
-  // Neon preview uses a narrowly-scoped SQL role. Do not allow business
-  // routes to use Prisma without authenticated transaction-scoped RLS
-  // until Fastify's auth adapter has been migrated and tested.
+  // Neon staging: only explicitly migrated endpoints are reachable.
+  // All Syonet, Cron, mutation and unconverted routes remain HTTP 503.
   if (process.env.CRM_NEON_STAGING_MODE === 'true') {
     fastify.addHook('onRequest', async (request, reply) => {
-      if (request.url.split('?')[0] !== '/health') {
-        return reply.status(503).send({
-          status: 'staging_security_gate',
-          message: 'Business routes disabled pending Neon RLS transactional integration',
-        });
-      }
+      const path = request.url.split('?')[0].replace(/\/+$/, '') || '/';
+      const method = request.method.toUpperCase();
+      const accepted =
+        (method === 'GET' && (
+          path === '/health' ||
+          path === '/api/v1/auth/me' ||
+          path === '/api/v1/dashboard/auth/me' ||
+          path === '/api/v1/stores' ||
+          path.startsWith('/api/v1/stores/')
+        )) ||
+        (method === 'POST' && (
+          path === '/api/v1/auth/login' ||
+          path === '/api/v1/auth/refresh' ||
+          path === '/api/v1/auth/logout' ||
+          path === '/api/v1/dashboard/auth/login'
+        ));
+      if (!accepted) return reply.status(503).send({
+        status: 'staging_security_gate',
+        message: 'Endpoint not yet cleared for transactional RLS',
+      });
     });
   }
 
