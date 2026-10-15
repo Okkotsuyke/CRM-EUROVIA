@@ -46,7 +46,7 @@ export const storeRoutes: FastifyPluginAsync = async (fastify) => {
         const row = await withNeonOperationalPrincipal(fastify.prisma, claims, async (tx, user) => {
           if (!canAccessStore(user, request.params.id)) return null;
           return tx.store.findFirst({
-            where: { id: request.params.id, id: storeIdFilter(user) },
+            where: { id: request.params.id }, // RLS already restricts the transaction to the actor's stores
             select: {
               id: true, shortName: true, syonetName: true, plaza: true,
               city: true, state: true, timezone: true, active: true,
