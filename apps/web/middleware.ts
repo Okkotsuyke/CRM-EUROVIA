@@ -19,6 +19,12 @@ import { createServerClient } from '@supabase/ssr';
 export async function middleware(request: NextRequest) {
   let response = NextResponse.next({ request });
 
+  // A branch de avaliação do CRM Eurovia usa somente Fastify+Neon.
+  // Nunca tentar atualizar sessão de Supabase herdada em Preview.
+  if (process.env.CRM_EUROVIA_PREVIEW_ONLY === 'true') {
+    return response;
+  }
+
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 

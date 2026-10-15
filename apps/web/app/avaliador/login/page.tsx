@@ -112,13 +112,15 @@ export default function AvaliadorLoginPage() {
           </button>
         </form>
 
-        {/* Credenciais de demonstração */}
-        <div className="mt-8 p-4 bg-slate-800/30 rounded-lg border border-slate-700/50">
-          <p className="text-xs text-slate-500 text-center">
-            Credenciais de demonstração:
-            <br />
-            <code className="text-slate-400">avaliador</code> / <code className="text-slate-400">evaluator2024</code>
+        {/* Preview da equipe: jamais expor senhas ou contas de teste no browser. */}
+        <div role="note" className="mt-8 p-4 bg-slate-800/30 rounded-lg border border-slate-700/50">
+          <p className="text-sm text-slate-300 text-center">
+            Ambiente de avaliação técnica. O acesso autenticado e os
+            painéis operacionais ainda estão em homologação.
           </p>
+          <a href="/login" className="mt-3 block text-center text-blue-300 underline underline-offset-2 text-sm">
+            Ver a tela de login operacional
+          </a>
         </div>
       </div>
     </div>
