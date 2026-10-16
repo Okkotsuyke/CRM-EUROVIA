@@ -527,15 +527,15 @@ export async function syonetLogin(config: SyonetRealConfig): Promise<boolean> {
           const bundleInfo = await page.evaluate(async (baseUrl) => {
             const entries = performance.getEntriesByType('resource') as PerformanceResourceTiming[];
             const scripts = [...new Set(entries.map((e) => e.name)
-              .filter((name) => name.startsWith(baseUrl) && /\\.js(?:[?#]|$)/i.test(name)))].slice(0, 40);
+              .filter((name) => name.startsWith(baseUrl) && /\.js(?:[?#]|$)/i.test(name)))].slice(0, 40);
             const findings: Array<{path: string; matches: string[]}> = [];
             for (const src of scripts) {
               try {
                 const text = await fetch(src, { credentials: 'include' }).then((r) => r.text());
                 const matches: string[] = [];
                 const patterns = [
-                  /\\/api\\/[A-Za-z0-9_?&=\\/$.:-]{0,180}/g,
-                  /(?:dataset|dashboard|consulta|query|execute|executar|widget)[A-Za-z0-9_?&=\\/$.:-]{0,100}/gi,
+                  /\/api\/[A-Za-z0-9_?&=\/$.:-]{0,180}/g,
+                  /(?:dataset|dashboard|consulta|query|execute|executar|widget)[A-Za-z0-9_?&=\/$.: -]{0,100}/gi,
                 ];
                 for (const pattern of patterns) {
                   for (const match of text.matchAll(pattern)) {
