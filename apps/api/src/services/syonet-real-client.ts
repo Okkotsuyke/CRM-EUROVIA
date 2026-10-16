@@ -505,22 +505,36 @@ export async function syonetLogin(config: SyonetRealConfig): Promise<boolean> {
       lastLoginTime = Date.now();
       console.log('✅ Syonet: Login realizado com sucesso');
 
-      const shellInfo = await page.evaluate(() => ({
-        url: location.href,
-        title: document.title,
-        iframes: Array.from(document.querySelectorAll('iframe'))
-          .map((x: HTMLIFrameElement) => x.src).filter(Boolean).slice(0, 20),
-        scripts: Array.from(document.scripts)
-          .map((x: HTMLScriptElement) => x.src).filter(Boolean).slice(0, 40),
-        links: Array.from(document.querySelectorAll('a'))
-          .map((x: HTMLAnchorElement) => ({
-            text: (x.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 100),
-            href: x.href || '',
-          }))
-          .filter(x => /dashboard|gestão|gestao|funil|vendas|produtividade/i.test(x.text + ' ' + x.href))
-          .slice(0, 30),
-      }));
-      console.log('🔎 Syonet shell info: ' + JSON.stringify(shellInfo));
+      // Inspeção somente do bundle público já carregado pelo portal autenticado.
+      // Registramos apenas caminhos de API e nenhum payload/cookie/credencial.
+      try {
+        const apiRoutes = await page.evaluate(async () => {
+          const sources = Array.from(document.scripts)
+            .map((s: HTMLScriptElement) => s.src)
+            .filter(Boolean)
+            .slice(0, 20);
+          const found = new Set<string>();
+          for (const src of sources) {
+            try {
+              const res = await fetch(src, { method: 'GET', credentials: 'include' });
+              if (!res.ok) continue;
+              const text = (await res.text()).slice(0, 4_000_000);
+              const matches = text.match(/\/api\/[A-Za-z0-9_.$?=&%{}:/-]{2,180}/g) || [];
+              for (const route of matches) {
+                if (/dashboard|dataset|widget|funil|produtividade|evento|empresa|usuario/i.test(route)) {
+                  found.add(route.split('?')[0]);
+                }
+              }
+            } catch {
+              // Bundle individual indisponível.
+            }
+          }
+          return [...found].slice(0, 100);
+        });
+        console.log('🔎 Syonet bundle API routes: ' + JSON.stringify(apiRoutes));
+      } catch {
+        console.warn('⚠️ Não foi possível inspecionar bundle do portal Syonet');
+      }
 
       return true;
     } else {
