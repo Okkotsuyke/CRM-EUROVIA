@@ -571,7 +571,7 @@ export async function syonetLogin(config: SyonetRealConfig): Promise<boolean> {
               .filter((name) => name.startsWith(baseUrl) && /\.js(?:[?#]|$)/i.test(name)))].slice(0, 40);
           }, config.baseUrl);
 
-          const findings: Array<{ path: string; status: number; length: number; terms: Record<string, number>; apiRoutes: string[]; snippets: string[] }> = [];
+          const findings: Array<{ path: string; status: number; length: number; terms: Record<string, number>; apiRoutes: string[]; chunkApiRoutes: string[]; snippets: string[] }> = [];
           for (const src of scripts) {
             try {
               const response = await page.request.get(src, { timeout: 30000 });
@@ -582,6 +582,28 @@ export async function syonetLogin(config: SyonetRealConfig): Promise<boolean> {
               for (const match of text.matchAll(routePattern)) {
                 if (!apiRoutes.includes(match[1])) apiRoutes.push(match[1]);
                 if (apiRoutes.length >= 300) break;
+              }
+              const chunkApiRoutes: string[] = [];
+              const chunkPattern = /["']((?:\.\.?\/|\/)[^"'\s]{1,180}\.js(?:\?[^"'\s]*)?)["']/g;
+              const chunkCandidates: string[] = [];
+              for (const match of text.matchAll(chunkPattern)) {
+                const candidate = match[1];
+                if (!candidate.includes('/api/') && !chunkCandidates.includes(candidate)) chunkCandidates.push(candidate);
+                if (chunkCandidates.length >= 80) break;
+              }
+              for (const candidate of chunkCandidates) {
+                try {
+                  const chunkUrl = new URL(candidate, src).href;
+                  if (new URL(chunkUrl).origin !== new URL(src).origin) continue;
+                  const chunkResponse = await page.request.get(chunkUrl, { timeout: 15000 });
+                  if (!chunkResponse.ok()) continue;
+                  const chunkText = await chunkResponse.text();
+                  for (const match of chunkText.matchAll(routePattern)) {
+                    if (!chunkApiRoutes.includes(match[1])) chunkApiRoutes.push(match[1]);
+                    if (chunkApiRoutes.length >= 500) break;
+                  }
+                } catch {}
+                if (chunkApiRoutes.length >= 500) break;
               }
               const terms: Record<string, number> = {};
               for (const term of ['dataset', 'dashboard', 'iddataset', '/api/', 'execute', 'executar', 'consulta', 'query']) {
@@ -609,6 +631,7 @@ export async function syonetLogin(config: SyonetRealConfig): Promise<boolean> {
                 length: text.length,
                 terms,
                 apiRoutes,
+                chunkApiRoutes,
                 snippets: snippets.slice(0, 80),
               });
             } catch (error) {
@@ -618,12 +641,13 @@ export async function syonetLogin(config: SyonetRealConfig): Promise<boolean> {
                 length: 0,
                 terms: {},
                 apiRoutes: [],
+                chunkApiRoutes: [],
                 snippets: ['fetch-error'],
               });
             }
           }
           console.log('🔎 Syonet JS resources: ' + JSON.stringify(scripts));
-          console.log('🔎 Syonet JS API routes: ' + JSON.stringify([...new Set(findings.flatMap((f) => f.apiRoutes))]));
+          console.log('🔎 Syonet JS API routes: ' + JSON.stringify([...new Set(findings.flatMap((f) => [...f.apiRoutes, ...f.chunkApiRoutes]))]));
           console.log('🔎 Syonet JS bundle diagnostics: ' + JSON.stringify(findings));
         } catch {
           console.warn('⚠️ Falha ao inspecionar bundles JS do Syonet');
