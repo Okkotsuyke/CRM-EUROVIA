@@ -89,6 +89,13 @@ export function checkSyonetReadOnlyRequest(
       return { allowed: false, reason: 'mutating-action-denied' };
     }
     if (path.startsWith('/api/') && !DATA_API.test(path)) {
+      // Modo de descoberta técnica: permite consultar endpoints GET/HEAD ainda
+      // não conhecidos para identificar as fontes reais usadas pelas telas.
+      // O bloqueio de métodos mutantes e de URLs com verbos de mutação continua
+      // ativo, portanto este modo não autoriza escrita no Syonet.
+      if (process.env.SYONET_DISCOVER_SCREENS === 'true') {
+        return { allowed: true, reason: 'read-only-discovery-api' };
+      }
       return { allowed: false, reason: 'api-not-allowlisted' };
     }
     // Somente portal de consulta e recursos estaticos.
