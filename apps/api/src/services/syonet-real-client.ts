@@ -1327,6 +1327,15 @@ export async function extractFunilData(config: SyonetRealConfig, filters?: {
   const metrics: FunilMetrics[] = [];
 
   try {
+    if (process.env.SYONET_PROBE_REPORT === 'true') {
+      try {
+        const report = await apiRequest(page, '/api/relatorio/resumo-eventos.json');
+        console.log('🔎 Syonet report resumo-eventos status=' + report.status +
+          ' shape=' + summarizeSyonetPayload(report.data));
+      } catch {
+        console.log('🔎 Syonet report resumo-eventos erro=consulta');
+      }
+    }
     if (process.env.SYONET_DISCOVER_UI === 'true') {
       try {
         const observed = new Set<string>();
