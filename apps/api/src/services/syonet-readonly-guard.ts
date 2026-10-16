@@ -100,6 +100,13 @@ export function checkSyonetReadOnlyRequest(
     }
     // Somente portal de consulta e recursos estaticos.
     if (!path.startsWith('/api/') && !/^\/$|^\/portal\/(?:app\.do|acessasistema\.do|geraImagemLogon\.do)(?:\/)?$|^\/portal\/app\/.*\.(?:js|css|json|map|png|jpe?g|gif|svg|webp|ico|woff2?|ttf|eot)$/i.test(path) && !/^\/portal\/react-web-components\/.*\.(?:js|css|json|map|png|jpe?g|gif|svg|webp|ico|woff2?|ttf|eot)$/i.test(path) && !/^\/(?:portal\/)?(?:assets|static|resources|public|images|img|fonts|css|js|vendor|dist|webjars)\//i.test(path) && !/^\/(?:favicon\.ico|robots\.txt)$/i.test(path)) {
+      // Durante a descoberta, a aplicação pode navegar para uma tela .do
+      // diferente do shell inicial. Continua sendo somente GET/HEAD e os
+      // termos de mutação já foram bloqueados acima.
+      if (process.env.SYONET_DISCOVER_SCREENS === 'true' &&
+          path.startsWith('/portal/')) {
+        return { allowed: true, reason: 'read-only-discovery-navigation' };
+      }
       return { allowed: false, reason: 'navigation-not-allowlisted' };
     }
   }
