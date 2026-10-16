@@ -9,6 +9,7 @@ import multipart from '@fastify/multipart';
 import rateLimit from '@fastify/rate-limit';
 import { prismaPlugin } from './plugins/prisma.plugin';
 import { checkNeonStagingReadiness } from './services/neon-staging';
+import { NeonAccessDenied, withNeonDashboardPrincipal } from './services/neon-auth-bridge';
 import sentryPlugin from './plugins/sentry.plugin';
 import { authRoutes } from './routes/auth.routes';
 import { storeRoutes } from './routes/store.routes';
@@ -105,6 +106,29 @@ async function authenticateDashboard(request: FastifyRequest, reply: FastifyRepl
     return unauthorized(reply);
   }
   if (decoded.type !== 'dashboard' || !decoded.id) return unauthorized(reply);
+
+  // Railway evaluator: refresh principal through a single transaction whose
+  // current role is crm_eurovia_runtime (NOBYPASSRLS). Never read the
+  // dashboard_users table with the owner's privileged connection.
+  if (process.env.CRM_DEPLOY_TARGET === 'railway') {
+    try {
+      const principal = await withNeonDashboardPrincipal(
+        request.server.prisma, decoded, async (_tx, actor) => actor,
+      );
+      request.dashboardUser = {
+        id: principal.id,
+        username: principal.username,
+        name: principal.name,
+        role: principal.role as DashboardRole,
+        allowedStores: principal.allowedStores,
+      };
+      return;
+    } catch (error) {
+      if (error instanceof NeonAccessDenied) return unauthorized(reply);
+      throw error;
+    }
+  }
+
   const current = await request.server.prisma.dashboardUser.findUnique({
     where: { id: decoded.id },
     select: {
@@ -255,6 +279,44 @@ export async function buildApp() {
       if (!accepted) return reply.status(503).send({
         status: 'staging_security_gate',
         message: 'Endpoint not yet cleared for transactional RLS',
+      });
+    });
+  }
+
+  // Railway production keeps the HTTP surface read-only for the evaluator,
+  // while the internal Syonet collector may run when explicitly enabled.
+  // The external integration is still protected by the immutable Syonet
+  // read-only guard: only approved login requests and allowlisted GET APIs
+  // can reach Syonet; all business mutations are denied.
+  if (process.env.CRM_DEPLOY_TARGET === 'railway') {
+    if (
+      !['production', 'test'].includes(process.env.NODE_ENV ?? '') ||
+      process.env.CRM_EUROVIA_PRODUCTION_READONLY !== 'true' ||
+      process.env.CRM_NEON_STAGING_MODE !== 'false' ||
+      process.env.SYONET_USE_REAL !== 'true'
+    ) {
+      throw new Error('Railway production requires real Syonet read-only collection and disabled staging mode');
+    }
+    const allowedReads = new Set([
+      '/health',
+      '/api/v1/dashboard/auth/me',
+      '/api/v1/analytics/overview',
+      '/api/v1/analytics/by-store',
+      '/api/v1/analytics/by-vl',
+      '/api/v1/analytics/by-media',
+      '/api/v1/analytics/productivity',
+      '/api/v1/analytics/trend',
+    ]);
+    fastify.addHook('onRequest', async (request, reply) => {
+      const path = request.url.split('?')[0].replace(/\/+$/, '') || '/';
+      const method = request.method.toUpperCase();
+      if (
+        (method === 'GET' && allowedReads.has(path)) ||
+        (method === 'POST' && path === '/api/v1/dashboard/auth/login')
+      ) return;
+      return reply.status(503).send({
+        success: false,
+        error: 'Rota bloqueada durante a homologacao de seguranca do Railway',
       });
     });
   }

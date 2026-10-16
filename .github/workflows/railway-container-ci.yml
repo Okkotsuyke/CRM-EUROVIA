@@ -1,0 +1,54 @@
+name: Validate Railway Docker images
+
+on:
+  push:
+    branches:
+      - deploy/railway-neon-production-20261015
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: railway-images-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  api:
+    name: API image with native Chromium
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build API container
+        run: docker build --pull -f Dockerfile.railway.api -t crm-eurovia-api:ci .
+      - name: Verify compiled Fastify server
+        run: |
+          docker run --rm --entrypoint sh crm-eurovia-api:ci -ec '
+            test -s /opt/crm/apps/api/dist/src/server.js
+            test -s /opt/crm/apps/api/dist/src/services/syonet-readonly-guard.js
+            node --check /opt/crm/apps/api/dist/src/server.js
+            node --check /opt/crm/apps/api/dist/src/services/syonet-real-client.js
+            cd /opt/crm/apps/api
+            CHROME_PATH="$(node -p "require(\"playwright-core\").chromium.executablePath()")"
+            test -x "$CHROME_PATH"
+          '
+
+  web:
+    name: Next.js standalone image
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Next.js container
+        run: docker build --pull -f Dockerfile.railway.web -t crm-eurovia-web:ci .
+      - name: Verify standalone Next.js entrypoint
+        run: |
+          docker run --rm --entrypoint sh crm-eurovia-web:ci -ec '
+            test -s /opt/crm/apps/web/server.js
+            test -d /opt/crm/apps/web/.next/static
+            node --check /opt/crm/apps/web/server.js
+          '
