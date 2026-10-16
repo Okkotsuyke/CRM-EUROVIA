@@ -4,16 +4,14 @@
 FROM node:24-bookworm-slim AS builder
 
 WORKDIR /opt/crm
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates openssl \
+    && rm -rf /var/lib/apt/lists/*
 RUN npm install --global pnpm@9.0.0
 
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-COPY apps/api/package.json ./apps/api/package.json
-COPY apps/web/package.json ./apps/web/package.json
-COPY packages/shared/package.json ./packages/shared/package.json
+# pnpm may also execute API workspace postinstall while installing the web
+# filter; keep the Prisma schema available from the very first install.
+COPY . .
 RUN pnpm install --frozen-lockfile --filter '@crm/web...'
-
-COPY apps/web ./apps/web
-COPY packages/shared ./packages/shared
 RUN mkdir -p apps/web/public
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN pnpm --filter @crm/web run build
