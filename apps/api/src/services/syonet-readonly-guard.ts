@@ -151,7 +151,19 @@ export async function installSyonetReadOnlyGuard(
       if (process.env.SYONET_DISCOVER_SCREENS === 'true') {
         try {
           const blockedUrl = new URL(req.url());
-          console.log('🔒 Syonet read-only guard blocked: ' + req.method() + ' ' + blockedUrl.pathname + ' reason=' + decision.reason);
+          let postData = '';
+          let bodyKeys: string[] = [];
+          if (req.method().toUpperCase() === 'POST') {
+            try { postData = String(req.postData() || ''); } catch {}
+            try {
+              const parsed = JSON.parse(postData);
+              if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) bodyKeys = Object.keys(parsed).slice(0, 80);
+            } catch {
+              bodyKeys = postData ? postData.split('&').map((part) => part.split('=')[0]).filter(Boolean).slice(0, 80) : [];
+            }
+          }
+          console.log('🔒 Syonet read-only guard blocked: ' + req.method() + ' ' + blockedUrl.pathname + ' reason=' + decision.reason +
+            (req.method().toUpperCase() === 'POST' ? ' meta=' + JSON.stringify({ bodyLength: postData.length, bodyKeys }) : ''));
         } catch {}
       }
       await route.abort('blockedbyclient');
