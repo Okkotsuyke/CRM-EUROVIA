@@ -504,41 +504,6 @@ export async function syonetLogin(config: SyonetRealConfig): Promise<boolean> {
       isLoggedIn = true;
       lastLoginTime = Date.now();
       console.log('✅ Syonet: Login realizado com sucesso');
-      try {
-        const probePage = await page.context().newPage();
-        const observed = new Set<string>();
-        const onRequest = (req: any) => {
-          try {
-            const url = req.url();
-            if (url.startsWith(config.baseUrl) && url.includes('/api/')) {
-              observed.add(req.method() + ' ' + new URL(url).pathname);
-            }
-          } catch {}
-        };
-        probePage.on('request', onRequest);
-        const dashboardRoutes = [
-          config.baseUrl + '/portal/appV2/portal/appV2/',
-          config.baseUrl + '/portal/appV2/portal/appV2/index.html',
-          config.baseUrl + '/portal/appV2/portal/appV2/index.html#/dashboard/189',
-          config.baseUrl + '/portal/appV2/portal/appV2/#/dashboard/189',
-        ];
-        for (const route of dashboardRoutes) {
-          try {
-            await probePage.goto(route, { waitUntil: 'domcontentloaded', timeout: LOGIN_TIMEOUT });
-            await probePage.waitForTimeout(15000);
-          } catch {}
-          if ([...observed].some((x) => /dashboard|dataset|widget|query|execute/i.test(x))) break;
-        }
-        const probeUrl = probePage.url();
-        probePage.off('request', onRequest);
-        await probePage.close();
-        console.log('🔎 Syonet dashboard route requests: ' + JSON.stringify({
-          url: probeUrl,
-          requests: [...observed].slice(0, 150),
-        }));
-      } catch {
-        console.warn('⚠️ Falha ao observar rotas do dashboard Syonet');
-      }
       return true;
     } else {
       console.error('❌ Syonet: Login falhou - ainda na página de login');
