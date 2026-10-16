@@ -591,7 +591,8 @@ export async function syonetLogin(config: SyonetRealConfig): Promise<boolean> {
               const snippets: string[] = [];
               for (const term of ['dataset', 'dashboard', 'idDataset', '/api/', 'execute', 'executar', 'consulta', 'query']) {
                 let from = 0;
-                for (let hit = 0; hit < 6; hit++) {
+                const maxHits = term === '/api/' ? 50 : 6;
+                for (let hit = 0; hit < maxHits; hit++) {
                   const index = lower.indexOf(term.toLowerCase(), from);
                   if (index < 0) break;
                   const snippet = text.slice(Math.max(0, index - 180), Math.min(text.length, index + 420))
