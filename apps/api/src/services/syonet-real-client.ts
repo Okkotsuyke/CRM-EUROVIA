@@ -850,9 +850,10 @@ export async function extractFunilData(config: SyonetRealConfig, filters?: {
             if (filters?.dataInicio) funilParams.set('dataInicio', filters.dataInicio);
             if (filters?.dataFim) funilParams.set('dataFim', filters.dataFim);
             const funilResponse = await apiRequest(page, `/api/funil?${funilParams.toString()}`);
+            console.log('🔎 Syonet /api/funil empresa ' + empresaId + ' status=' + funilResponse.status +
+              ' shape=' + summarizeSyonetPayload(funilResponse.data));
             if (funilResponse.status === 200 && funilResponse.data) {
               const funilData = funilResponse.data;
-              console.log('🔎 Syonet /api/funil response: ' + summarizeSyonetPayload(funilData));
 
               // Extrair métricas do funil
               metric.leadsTotal = parseInt(funilData.leads) || parseInt(funilData.totalLeads) || 0;
@@ -1259,6 +1260,11 @@ export async function extractLeadsData(
             '/api/evento?idEmpresa=' + empresaId + '&page=' + pageNumber + '&size=' + PAGE_SIZE
           );
 
+          if (pageNumber === 0) {
+            console.log('🔎 Syonet /api/evento empresa ' + empresaId + ' status=' + response.status +
+              ' shape=' + summarizeSyonetPayload(response.data));
+          }
+
           if (response.status !== 200 || !response.data) break;
 
           const items: any[] = Array.isArray(response.data)
@@ -1398,4 +1404,3 @@ export function getSyonetRealClient(): {
     logout: syonetLogout,
     isAuthenticated: isSyonetAuthenticated,
   };
-}
