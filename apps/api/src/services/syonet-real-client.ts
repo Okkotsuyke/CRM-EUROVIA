@@ -1329,11 +1329,33 @@ export async function extractFunilData(config: SyonetRealConfig, filters?: {
   try {
     if (process.env.SYONET_PROBE_REPORT === 'true') {
       try {
-        const report = await apiRequest(page, '/api/relatorio/resumo-eventos.json');
-        console.log('🔎 Syonet report resumo-eventos status=' + report.status +
-          ' shape=' + summarizeSyonetPayload(report.data));
+        const categorias = await apiRequest(page, '/api/dashboard/painel/categoria');
+        console.log('🔎 Syonet dashboard painel/categoria status=' + categorias.status +
+          ' shape=' + summarizeSyonetPayload(categorias.data));
       } catch {
-        console.log('🔎 Syonet report resumo-eventos erro=consulta');
+        console.log('🔎 Syonet dashboard painel/categoria erro=consulta');
+      }
+
+      const reportCandidates = [
+        '/api/relatorio/resumo-eventos.json',
+        '/api/relatorio/resumo-eventos.json?empresa=12',
+        '/api/relatorio/resumo-eventos.json?idEmpresa=12',
+        '/api/relatorio/resumo-eventos.json?empresaId=12',
+      ];
+      for (const candidate of reportCandidates) {
+        try {
+          const report = await apiRequest(page, candidate);
+          const robust = extractFunnelMetricsRobust(report.data);
+          console.log('🔎 Syonet report resumo-eventos candidate=' + candidate.split('?')[0] +
+            ' query=' + (candidate.includes('?') ? candidate.slice(candidate.indexOf('?') + 1) : 'none') +
+            ' status=' + report.status +
+            ' metrics=' + JSON.stringify(robust) +
+            ' shape=' + summarizeSyonetPayload(report.data));
+        } catch {
+          console.log('🔎 Syonet report resumo-eventos candidate=' + candidate.split('?')[0] +
+            ' query=' + (candidate.includes('?') ? candidate.slice(candidate.indexOf('?') + 1) : 'none') +
+            ' erro=consulta');
+        }
       }
     }
     if (process.env.SYONET_DISCOVER_UI === 'true') {
