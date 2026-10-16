@@ -513,9 +513,47 @@ export async function syonetLogin(config: SyonetRealConfig): Promise<boolean> {
         observedApiCalls.set(key, statuses);
       } catch {}
     };
-    page.on('request', (req) => recordApiCall(req.url()));
+    page.on('request', (req) => {
+      recordApiCall(req.url());
+      try {
+        const u = new URL(req.url());
+        if (u.pathname === '/api/relatorio/resumo-eventos.json') {
+          console.log('🔎 Syonet report request: ' + JSON.stringify({
+            method: req.method(),
+            queryKeys: [...u.searchParams.keys()],
+            hasBasicAuth: Boolean(req.headers()['authorization']?.toLowerCase().startsWith('basic ')),
+          }));
+        }
+      } catch {}
+    });
     page.on('response', (res) => {
       recordApiCall(res.url(), res.status());
+      try {
+        const u = new URL(res.url());
+        if (u.pathname === '/api/relatorio/resumo-eventos.json') {
+          void (async () => {
+            try {
+              const contentType = String(res.headers()['content-type'] || '').split(';')[0];
+              const bodyText = await res.text();
+              let shape: unknown = { contentType, length: bodyText.length };
+              try {
+                const body = JSON.parse(bodyText);
+                shape = {
+                  contentType,
+                  length: bodyText.length,
+                  metrics: extractFunnelMetricsRobust(body),
+                  rootType: Array.isArray(body) ? 'array' : (body === null ? 'null' : typeof body),
+                  arrayLength: Array.isArray(body) ? body.length : undefined,
+                  keys: body && typeof body === 'object' && !Array.isArray(body)
+                    ? Object.keys(body as Record<string, unknown>).slice(0, 80)
+                    : undefined,
+                };
+              } catch {}
+              console.log('🔎 Syonet report response: status=' + res.status() + ' shape=' + JSON.stringify(shape));
+            } catch {}
+          })();
+        }
+      } catch {}
       if (res.status() >= 400) {
         try {
           const u = new URL(res.url());
