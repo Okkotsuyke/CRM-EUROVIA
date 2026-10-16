@@ -195,7 +195,9 @@ async function syncFunilMetrics(batchId: string): Promise<{ processed: number; e
         throw new Error('Falha ao autenticar no Syonet');
       }
       metrics = await realClient.extractFunil();
-      await realClient.logout();
+      // A sessão única é reutilizada pelas telas desta execução.
+      // O logout acontece no finally do runSync, reduzindo logins repetidos
+      // e chamadas extras ao Syonet.
     } else {
       // Usar cliente mock (desenvolvimento)
       console.log('🔄 Sync: Usando cliente Syonet MOCK');
@@ -290,7 +292,6 @@ async function syncProductivityMetrics(batchId: string): Promise<{ processed: nu
         throw new Error('Falha ao autenticar no Syonet');
       }
       metrics = await realClient.extractProductivity();
-      await realClient.logout();
     } else {
       // Usar cliente mock (desenvolvimento)
       console.log('🔄 Sync: Usando cliente Syonet MOCK');
@@ -426,11 +427,7 @@ async function syncLeads(batchId: string, dateRange?: { start: Date; end: Date }
       if (!logged) {
         throw new Error('Falha ao autenticar no Syonet');
       }
-      try {
-        leads = await realClient.extractLeads(dateRange);
-      } finally {
-        await realClient.logout();
-      }
+      leads = await realClient.extractLeads(dateRange);
     } else {
       const client = getSyonetClient();
       leads = await client.extractLeads(dateRange);
@@ -640,6 +637,33 @@ export async function runSync(options: SyncOptions = {}): Promise<SyncSummary> {
       rowsProcessed: 0,
       errors: ['Falha de sistema durante sincronizacao'],
     });
+  }
+
+  } catch (err) {
+    totalErrors += 1;
+    if (syncRunId) {
+      try {
+        await registerSyncEnd(syncRunId, 'FAILED', totalRowsProcessed, 0, 0, totalErrors, 'Falha de sistema durante sincronizacao');
+      } catch {
+        console.error('Falha adicional ao registrar finalizacao de sync no banco Eurovia');
+      }
+    }
+    // Nao registrar payloads, URLs ou cookies de integracao em logs.
+    console.error('Falha no processo de sincronizacao Eurovia');
+    screens.push({
+      screen: 'SYSTEM',
+      success: false,
+      rowsProcessed: 0,
+      errors: ['Falha de sistema durante sincronizacao'],
+    });
+  } finally {
+    if (USE_REAL_CLIENT) {
+      try {
+        await getSyonetRealClient().logout();
+      } catch {
+        // Limpeza best-effort da sessão do Syonet.
+      }
+    }
   }
 
   return {
