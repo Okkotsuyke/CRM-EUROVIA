@@ -43,6 +43,14 @@ export function checkSyonetReadOnlyRequest(
   const isApprovedSessionReadPost =
     normalizedMethod === 'POST' &&
     /^\/api\/sessao\/(?:empresa|usuario\/empresa)\/?$/i.test(destination.pathname);
+  // The dashboard UI uses this POST as a report/query transport. Its body is
+  // composed of pagination/filter fields (date, status, company, team/user,
+  // totalizer id); it returns report data and does not mutate CRM records.
+  // Keep the approval exact-path and method-specific so no other POST becomes
+  // writable through discovery mode.
+  const isApprovedDashboardReadPost =
+    normalizedMethod === 'POST' &&
+    /^\/api\/relatorio\/resumo-eventos\.json\/?$/i.test(destination.pathname);
   const isApprovedLoginPost =
     normalizedMethod === 'POST' &&
     (
@@ -87,6 +95,9 @@ export function checkSyonetReadOnlyRequest(
     }
     if (isApprovedSessionReadPost) {
       return { allowed: true, reason: 'read-only-session-context' };
+    }
+    if (isApprovedDashboardReadPost) {
+      return { allowed: true, reason: 'read-only-dashboard-query' };
     }
     let decodedPath: string;
     try {
