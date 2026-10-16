@@ -649,6 +649,58 @@ export async function extractFunilData(config: SyonetRealConfig, filters?: {
           leadsByVs: {},
         };
 
+        // O endpoint /api/dashboard/{id} retorna a definição do dashboard (datasets/widgets),
+        // não o resultado calculado. O resultado é obtido por uma chamada separada do frontend.
+        // Descobrimos essa rota por GET somente; nenhum método de escrita é permitido pelo guard.
+        let dashboardDataResponse: any = null;
+        if (empresaId === targetEmpresaIds[0]) {
+          const dateStart = filters?.dataInicio;
+          const dateEnd = filters?.dataFim;
+          const queryVariants = [
+            { key: 'empresa', value: String(empresaId) },
+            { key: 'idEmpresa', value: String(empresaId) },
+          ];
+          const candidates = [
+            '/api/dashboard/189/dados',
+            '/api/dashboard/189/data',
+            '/api/dashboard/189/execute',
+            '/api/dashboard/189/result',
+            '/api/dashboard/189/resultado',
+            '/api/dashboard/189/query',
+            '/api/dashboard/189/valores',
+            '/api/dashboard/189/widgets',
+            '/api/dataset/664/data',
+            '/api/dataset/664/dados',
+            '/api/dataset/664/execute',
+            '/api/dataset/664/result',
+            '/api/dataset/664/query',
+          ];
+          for (const candidate of candidates) {
+            for (const variant of queryVariants) {
+              const params = new URLSearchParams({ [variant.key]: variant.value });
+              if (dateStart) params.set('dataInicio', dateStart);
+              if (dateEnd) params.set('dataFim', dateEnd);
+              try {
+                const probe = await apiRequest(page, candidate + '?' + params.toString());
+                const safe = summarizeSyonetPayload(probe.data);
+                console.log('🔎 Syonet dashboard-data probe ' + candidate +
+                  ' ' + variant.key + ' status=' + probe.status + ' shape=' + safe);
+                if (probe.status === 200 && probe.data) {
+                  const robustProbe = extractFunnelMetricsRobust(probe.data);
+                  if (Object.keys(robustProbe).length > 0) {
+                    dashboardDataResponse = probe.data;
+                    break;
+                  }
+                }
+              } catch (err) {
+                console.log('🔎 Syonet dashboard-data probe ' + candidate +
+                  ' ' + variant.key + ' erro=consulta');
+              }
+            }
+            if (dashboardDataResponse) break;
+          }
+        }
+
         // Processar dados do dashboard
         if (dashboardResponse.data) {
           const data = dashboardResponse.data;
@@ -666,6 +718,15 @@ export async function extractFunilData(config: SyonetRealConfig, filters?: {
           if (robust.appointmentsConfirmed !== undefined) metric.appointmentsConfirmed = robust.appointmentsConfirmed;
           if (robust.flowTotal !== undefined) metric.flowTotal = robust.flowTotal;
           if (robust.salesTotal !== undefined) metric.salesTotal = robust.salesTotal;
+
+          if (dashboardDataResponse) {
+            const discovered = extractFunnelMetricsRobust(dashboardDataResponse);
+            if (discovered.leadsTotal !== undefined) metric.leadsTotal = discovered.leadsTotal;
+            if (discovered.appointmentsTotal !== undefined) metric.appointmentsTotal = discovered.appointmentsTotal;
+            if (discovered.appointmentsConfirmed !== undefined) metric.appointmentsConfirmed = discovered.appointmentsConfirmed;
+            if (discovered.flowTotal !== undefined) metric.flowTotal = discovered.flowTotal;
+            if (discovered.salesTotal !== undefined) metric.salesTotal = discovered.salesTotal;
+          }
 
           // Extrair KPIs do dashboard
           // Estrutura típica: { kpis: [...], components: [...] }
