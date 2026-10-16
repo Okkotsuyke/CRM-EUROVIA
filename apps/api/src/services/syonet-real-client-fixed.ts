@@ -15,7 +15,7 @@
  * - GET /api/funil - Funil
  */
 
-import { chromium, Browser, Page, BrowserContext } from 'playwright';
+import { chromium, Browser, Page, BrowserContext } from 'playwright-core';
 import { installSyonetReadOnlyGuard } from './syonet-readonly-guard';
 import {
   normalizeMedia,
