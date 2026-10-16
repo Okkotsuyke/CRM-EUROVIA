@@ -5,17 +5,14 @@ FROM node:24-bookworm-slim
 
 WORKDIR /opt/crm
 
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates openssl \
+    && rm -rf /var/lib/apt/lists/*
 RUN npm install --global pnpm@9.0.0
 
-# Install from the *committed*, reproducible monorepo lockfile.
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-COPY apps/api/package.json ./apps/api/package.json
-COPY apps/web/package.json ./apps/web/package.json
-COPY packages/shared/package.json ./packages/shared/package.json
+# Prisma runs 'postinstall' during pnpm install. Its schema must already be
+# present, and OpenSSL must exist before Prisma detects its runtime target.
+COPY . .
 RUN pnpm install --frozen-lockfile --filter '@crm/api...'
-
-COPY apps/api ./apps/api
-COPY packages/shared ./packages/shared
 
 # Unlike ephemeral serverless functions, this container has its own Chromium.
 # Browser binaries and native Linux libraries are installed during image build.
