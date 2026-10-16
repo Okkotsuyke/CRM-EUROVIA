@@ -589,8 +589,10 @@ export async function runSync(options: SyncOptions = {}): Promise<SyncSummary> {
       });
     }
 
-    // Sincronizar Leads (se full load)
-    if (options.fullLoad) {
+    // Leads fazem parte da sincronização produtiva principal.
+    // fullLoad continua aceito para compatibilidade, mas a tela LEADS
+    // também pode ser solicitada explicitamente pelo scheduler/API.
+    if (options.fullLoad || options.screens?.includes('LEADS')) {
       const end = new Date();
       const start = new Date(end);
       start.setDate(start.getDate() - 30);
