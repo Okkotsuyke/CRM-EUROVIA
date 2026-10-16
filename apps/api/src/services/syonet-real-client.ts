@@ -461,7 +461,22 @@ async function discoverDashboardData(
 
   page.on('response', handler);
   try {
+    // Descobrir a rota real do módulo pelo menu renderizado após o login.
+    const navTargets = await page.evaluate(() =>
+      Array.from(document.querySelectorAll('a,button'))
+        .map((el: Element) => ({
+          text: (el.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 120),
+          href: (el as HTMLAnchorElement).href || '',
+        }))
+        .filter(x => /dashboard|gestão|gestao|funil|vendas|produtividade/i.test(x.text + ' ' + x.href))
+        .slice(0, 30)
+    );
+    if (navTargets.length) {
+      console.log('🔎 Syonet navigation targets: ' + JSON.stringify(navTargets));
+    }
+
     const routes = [
+      ...navTargets.map(x => x.href).filter(Boolean),
       `${config.baseUrl}/portal/app.do?modulo=dashboard#/dashboard/189`,
       `${config.baseUrl}/portal/app.do?modulo=dashboard#/189`,
     ];
