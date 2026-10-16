@@ -522,7 +522,43 @@ export async function syonetLogin(config: SyonetRealConfig): Promise<boolean> {
       await getSessionCookies();
       isLoggedIn = true;
       lastLoginTime = Date.now();
-      console.log('✅ Syonet: Login realizado com sucesso');
+      if (process.env.SYONET_DISCOVER_BUNDLE === 'true') {
+        try {
+          const bundleInfo = await page.evaluate(async (baseUrl) => {
+            const entries = performance.getEntriesByType('resource') as PerformanceResourceTiming[];
+            const scripts = [...new Set(entries.map((e) => e.name)
+              .filter((name) => name.startsWith(baseUrl) && /\\.js(?:[?#]|$)/i.test(name)))].slice(0, 40);
+            const findings: Array<{path: string; matches: string[]}> = [];
+            for (const src of scripts) {
+              try {
+                const text = await fetch(src, { credentials: 'include' }).then((r) => r.text());
+                const matches: string[] = [];
+                const patterns = [
+                  /\\/api\\/[A-Za-z0-9_?&=\\/$.:-]{0,180}/g,
+                  /(?:dataset|dashboard|consulta|query|execute|executar|widget)[A-Za-z0-9_?&=\\/$.:-]{0,100}/gi,
+                ];
+                for (const pattern of patterns) {
+                  for (const match of text.matchAll(pattern)) {
+                    const value = match[0];
+                    if (!matches.includes(value)) matches.push(value);
+                    if (matches.length >= 80) break;
+                  }
+                  if (matches.length >= 80) break;
+                }
+                if (matches.length) {
+                  findings.push({ path: new URL(src).pathname, matches });
+                }
+              } catch {}
+            }
+            return { scripts, findings };
+          }, config.baseUrl);
+          console.log('🔎 Syonet JS resources: ' + JSON.stringify(bundleInfo.scripts));
+          console.log('🔎 Syonet JS API route findings: ' + JSON.stringify(bundleInfo.findings));
+        } catch {
+          console.warn('⚠️ Falha ao inspecionar bundles JS do Syonet');
+        }
+      }
+            console.log('✅ Syonet: Login realizado com sucesso');
       return true;
     } else {
       console.error('❌ Syonet: Login falhou - ainda na página de login');
