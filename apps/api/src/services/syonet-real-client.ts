@@ -551,6 +551,25 @@ export async function syonetLogin(config: SyonetRealConfig): Promise<boolean> {
 
     const currentUrl = page.url();
     console.log(`📍 URL atual: ${currentUrl}`);
+    try {
+      const contextPages = page.context().pages();
+      const pageStates = [];
+      for (const p of contextPages) {
+        pageStates.push({
+          url: p.url().split('?')[0],
+          title: await p.title().catch(() => ''),
+          frames: p.frames().map((frame) => frame.url().split('?')[0]).slice(0, 20),
+          dom: await p.evaluate(() => ({
+            bodyChildren: document.body?.children.length || 0,
+            elementCount: document.querySelectorAll('*').length,
+            scriptCount: document.querySelectorAll('script').length,
+            linkCount: document.querySelectorAll('link').length,
+            textLength: String(document.body?.innerText || '').length,
+          })).catch(() => null),
+        });
+      }
+      console.log('🔎 Syonet context pages after login: ' + JSON.stringify(pageStates));
+    } catch {}
     console.log('🔎 Syonet API calls observadas durante login/dashboard: ' + JSON.stringify(
       [...observedApiCalls.entries()].map(([path, statuses]) => ({ path, statuses: [...statuses] })).slice(0, 300)
     ));
