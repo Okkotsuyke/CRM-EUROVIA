@@ -16,7 +16,11 @@ interface LoginBody {
 }
 
 export async function dashboardAuthRoutes(fastify: FastifyInstance) {
-  if (process.env.CRM_NEON_STAGING_MODE === 'true') {
+  // Railway production uses the existing SECURITY DEFINER login function under
+  // SET LOCAL ROLE crm_eurovia_runtime, never a privileged Prisma lookup.
+  if (process.env.CRM_NEON_STAGING_MODE === 'true' ||
+      (process.env.CRM_DEPLOY_TARGET === 'railway' &&
+       process.env.CRM_EUROVIA_PRODUCTION_READONLY === 'true')) {
     fastify.post<{ Body: LoginBody }>('/login', {
       config: { rateLimit: { max: 5, timeWindow: '1 minute' } },
     }, async (request, reply) => {
