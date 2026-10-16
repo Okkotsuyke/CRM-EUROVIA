@@ -38,9 +38,17 @@ export function checkSyonetReadOnlyRequest(
   const normalizedMethod = method.toUpperCase();
   const isApprovedLoginPost =
     normalizedMethod === 'POST' &&
-    destination.pathname.toLowerCase() === LOGIN_PATH &&
-    destination.searchParams.size === 1 &&
-    destination.searchParams.get('modulo')?.toLowerCase() === 'login';
+    (
+      (
+        destination.pathname.toLowerCase() === LOGIN_PATH &&
+        destination.searchParams.size === 1 &&
+        destination.searchParams.get('modulo')?.toLowerCase() === 'login'
+      ) ||
+      (
+        destination.pathname.toLowerCase() === '/portal/validarlogonusuario.do' &&
+        destination.searchParams.has('opcaoAtualizacao')
+      )
+    );
 
   if (!READ_METHODS.has(normalizedMethod) && !isApprovedLoginPost) {
     return { allowed: false, reason: 'write-method-denied' };
