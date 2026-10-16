@@ -497,9 +497,13 @@ export async function syonetLogin(config: SyonetRealConfig): Promise<boolean> {
     // Ir para página de login
     console.log('📍 Navegando para página de login...');
     await page.goto(`${config.baseUrl}/portal/app.do?modulo=login#/login`, {
-      waitUntil: 'domcontentloaded',
+      // O portal pode manter requests abertas durante o bootstrap do SPA.
+      // O que precisamos aqui é o commit da navegação; os campos são aguardados
+      // explicitamente logo depois.
+      waitUntil: 'commit',
       timeout: LOGIN_TIMEOUT,
     });
+    await page.waitForLoadState('domcontentloaded', { timeout: 15000 }).catch(() => {});
 
     // CRÍTICO: Aguardar React renderizar completamente
     // O Syonet é um SPA React e precisa de tempo para montar o DOM
@@ -1430,7 +1434,7 @@ export async function extractLeadsData(
 
     // Buscar eventos de cada empresa com paginacao completa. Todas as chamadas
     // passam pelo guard imutavel e sao exclusivamente GET.
-    const PAGE_SIZE = 200;
+    const PAGE_SIZE = 100;
     const MAX_PAGES_PER_STORE = 100;
 
     for (const empresaId of empresaIds) {
@@ -1440,6 +1444,7 @@ export async function extractLeadsData(
             idEmpresa: String(empresaId),
             page: String(pageNumber),
             size: String(PAGE_SIZE),
+            sort: 'idEvento,desc',
           });
           if (dateRange) {
             params.set('dataInicio', dateRange.start.toISOString().slice(0, 10));
@@ -1475,8 +1480,14 @@ export async function extractLeadsData(
             }
           }
 
+          const validTimes = items
+            .map((item) => new Date(item.dataInc || item.dtInc || 0).getTime())
+            .filter(Number.isFinite);
+          const pageNewestDate = validTimes.length > 0 ? new Date(Math.max(...validTimes)).toISOString() : null;
+          const pageOldestDate = Number.isFinite(pageOldestTime) ? new Date(pageOldestTime).toISOString() : null;
           console.log('   Empresa ' + empresaId + ', pagina ' + pageNumber + ': ' + items.length +
-            ' eventos (datasValidas=' + pageValidDates + ', datasInvalidas=' + pageInvalidDates + ')');
+            ' eventos (maisNovo=' + pageNewestDate + ', maisAntigo=' + pageOldestDate +
+            ', datasValidas=' + pageValidDates + ', datasInvalidas=' + pageInvalidDates + ')');
 
           for (const item of items) {
             const resolvedStoreName =
