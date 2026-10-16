@@ -545,6 +545,20 @@ export async function syonetLogin(config: SyonetRealConfig): Promise<boolean> {
                   }
                   if (matches.length >= 80) break;
                 }
+                const contextSnippets: string[] = [];
+                for (const term of ['dataset', 'dashboard', 'idDataset', 'execute', 'executar', 'consulta', 'query']) {
+                  let from = 0;
+                  for (let hit = 0; hit < 8; hit++) {
+                    const index = text.toLowerCase().indexOf(term.toLowerCase(), from);
+                    if (index < 0) break;
+                    const snippet = text.slice(Math.max(0, index - 180), Math.min(text.length, index + 420))
+                      .replace(/\\s+/g, ' ')
+                      .replace(/(['"])(?:\\\\.|(?!\\1).)*\\1/g, '$1<redacted>$1');
+                    contextSnippets.push(term + ': ' + snippet);
+                    from = index + term.length;
+                  }
+                }
+                findings.push({ path: new URL(src).pathname, matches: [...matches, ...contextSnippets].slice(0, 160) });
                 if (matches.length) {
                   findings.push({ path: new URL(src).pathname, matches });
                 }
