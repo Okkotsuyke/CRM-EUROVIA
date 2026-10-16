@@ -504,6 +504,32 @@ export async function syonetLogin(config: SyonetRealConfig): Promise<boolean> {
       isLoggedIn = true;
       lastLoginTime = Date.now();
       console.log('✅ Syonet: Login realizado com sucesso');
+      try {
+        const observed = new Set<string>();
+        const onReq = (req: any) => {
+          try {
+            const url = req.url();
+            if (url.startsWith(config.baseUrl) && url.includes('/api/')) observed.add(req.method() + ' ' + new URL(url).pathname);
+          } catch {}
+        };
+        page.on('request', onReq);
+        for (const route of [
+          config.baseUrl + '/portal/appV2/portal/appV2/',
+          config.baseUrl + '/portal/appV2/portal/appV2/index.html',
+          config.baseUrl + '/portal/app.do?modulo=dashboard',
+          config.baseUrl + '/portal/app.do?modulo=dashboard#/dashboard/189',
+        ]) {
+          try {
+            await page.goto(route, { waitUntil: 'domcontentloaded', timeout: LOGIN_TIMEOUT });
+            await page.waitForTimeout(12000);
+          } catch {}
+          if (observed.size > 5) break;
+        }
+        page.off('request', onReq);
+        console.log('🔎 Syonet navigation API requests: ' + JSON.stringify([...observed].slice(0, 100)));
+      } catch {
+        console.warn('⚠️ Falha ao observar navegação do dashboard Syonet');
+      }
       return true;
     } else {
       console.error('❌ Syonet: Login falhou - ainda na página de login');
