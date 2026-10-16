@@ -539,6 +539,30 @@ export async function syonetLogin(config: SyonetRealConfig): Promise<boolean> {
       await getSessionCookies();
       isLoggedIn = true;
       lastLoginTime = Date.now();
+      if (process.env.SYONET_DISCOVER_UI === 'true') {
+        try {
+          const dashboardElements = await page.evaluate(() => Array.from(document.querySelectorAll('*'))
+            .map((el: any) => ({
+              tag: String(el.tagName || ''),
+              text: String(el.innerText || el.textContent || '').trim().slice(0, 100),
+              role: String(el.getAttribute?.('role') || ''),
+              aria: String(el.getAttribute?.('aria-label') || ''),
+            }))
+            .filter((x) => /^dashboard$/i.test(x.text) || /dashboard/i.test(x.aria))
+            .slice(0, 80));
+          console.log('🔎 Syonet dashboard elements: ' + JSON.stringify(dashboardElements));
+
+          const dashboardTarget = page.getByText('Dashboard', { exact: true }).first();
+          if (await dashboardTarget.count()) {
+            await dashboardTarget.click({ timeout: 5000 }).catch(() => {});
+            await page.waitForTimeout(15000);
+            console.log('🔎 Syonet dashboard navigation after click: ' + page.url() + ' hash=' + await page.evaluate(() => window.location.hash));
+          }
+        } catch {
+          console.warn('⚠️ Falha ao interagir com navegação Dashboard do Syonet');
+        }
+      }
+
       if (process.env.SYONET_DISCOVER_BUNDLE === 'true') {
         try {
           const scripts = await page.evaluate((baseUrl) => {
