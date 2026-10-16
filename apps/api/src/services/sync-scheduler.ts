@@ -38,7 +38,7 @@ async function syncCallback(): Promise<void> {
 
   try {
     const result = await runSync({
-      screens: ['FUNIL', 'PRODUTIVIDADE'],
+      screens: ['FUNIL', 'PRODUTIVIDADE', 'LEADS'],
       incremental: true,
       fullLoad: process.env.SYNC_FULL_LOAD === 'true',
     });
