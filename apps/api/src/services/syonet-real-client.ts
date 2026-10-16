@@ -819,6 +819,76 @@ const SYONET_SCREEN_TARGETS: SyonetScreenTarget[] = [
   },
 ];
 
+async function captureSyonetFrameInventory(page: Page): Promise<unknown[]> {
+  const frames = page.frames();
+  const result: unknown[] = [];
+  for (const frame of frames) {
+    try {
+      const info = await frame.evaluate(() => {
+        const textOf = (el: Element) => String((el as HTMLElement).innerText || el.textContent || '')
+          .replace(/\s+/g, ' ').trim().slice(0, 220);
+        const visible = (el: Element) => {
+          const style = window.getComputedStyle(el as HTMLElement);
+          const rect = (el as HTMLElement).getBoundingClientRect();
+          return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0;
+        };
+        const controls = Array.from(document.querySelectorAll(
+          'button,a,[role="button"],[role="menuitem"],[role="link"],[role="tab"],input,select'
+        )).filter(visible).map((el) => ({
+          tag: el.tagName.toLowerCase(),
+          text: textOf(el),
+          aria: String(el.getAttribute('aria-label') || '').slice(0, 120),
+          href: String(el.getAttribute('href') || '').slice(0, 260),
+        })).filter((x) => x.text || x.aria || x.href).slice(0, 220);
+        return {
+          url: location.href.split('?')[0],
+          title: document.title,
+          bodyTextLength: String(document.body?.innerText || '').length,
+          bodyTextSample: String(document.body?.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 900),
+          headings: Array.from(document.querySelectorAll('h1,h2,h3,h4,[role="heading"]')).filter(visible).map(textOf).filter(Boolean).slice(0, 60),
+          controls,
+          tableCount: document.querySelectorAll('table').length,
+        };
+      });
+      result.push(info);
+    } catch {
+      result.push({ url: frame.url(), error: 'frame-unavailable' });
+    }
+  }
+  return result;
+}
+
+async function clickUiLabelAcrossFrames(page: Page, labels: string[]): Promise<{ clicked: boolean; label?: string; text?: string; frameUrl?: string }> {
+  for (const frame of page.frames()) {
+    for (const label of labels) {
+      try {
+        const result = await frame.evaluate((targetLabel) => {
+          const wanted = targetLabel.replace(/\s+/g, ' ').trim().toLowerCase();
+          const isVisible = (el: Element) => {
+            const style = window.getComputedStyle(el as HTMLElement);
+            const rect = (el as HTMLElement).getBoundingClientRect();
+            return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0;
+          };
+          const candidates = Array.from(document.querySelectorAll(
+            'button,a,[role="button"],[role="menuitem"],[role="link"],[role="tab"],li'
+          )).filter(isVisible) as HTMLElement[];
+          const normalized = (el: HTMLElement) =>
+            String(el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
+          const exact = candidates.find((el) => normalized(el) === wanted);
+          const partial = candidates.find((el) => normalized(el).includes(wanted));
+          const target = exact || partial;
+          if (!target) return null;
+          target.scrollIntoView({ block: 'center', inline: 'center' });
+          target.click();
+          return { text: normalized(target).slice(0, 180) };
+        }, label);
+        if (result) return { clicked: true, label, text: result.text, frameUrl: frame.url() };
+      } catch {}
+    }
+  }
+  return { clicked: false };
+}
+
 async function clickUiLabel(page: Page, labels: string[]): Promise<{ clicked: boolean; label?: string; text?: string }> {
   for (const label of labels) {
     try {
@@ -1068,24 +1138,26 @@ async function discoverSyonetScreens(config: SyonetRealConfig, page: Page): Prom
 
   try {
     console.log('🔬 Syonet navigation inventory: ' + JSON.stringify(await captureScreenDom(page)));
+    console.log('🔬 Syonet frame inventory: ' + JSON.stringify(await captureSyonetFrameInventory(page)));
 
     for (const target of SYONET_SCREEN_TARGETS) {
       if (page.isClosed()) break;
       try {
-      let clicked = await clickUiLabel(page, target.labels);
+      let clicked = await clickUiLabelAcrossFrames(page, target.labels);
+      if (!clicked.clicked) clicked = await clickUiLabel(page, target.labels);
 
       if (!clicked.clicked) {
-        await clickUiLabel(page, ['Gestão', 'GESTÃO']);
+        await clickUiLabelAcrossFrames(page, ['Gestão', 'GESTÃO']);
         await page.waitForTimeout(1500);
-        clicked = await clickUiLabel(page, target.labels);
+        clicked = await clickUiLabelAcrossFrames(page, target.labels);
       }
 
       if (!clicked.clicked) {
-        await clickUiLabel(page, ['Dashboard', 'DASHBOARD']);
+        await clickUiLabelAcrossFrames(page, ['Dashboard', 'DASHBOARD']);
         await page.waitForTimeout(1000);
-        await clickUiLabel(page, ['Gestão', 'GESTÃO']);
+        await clickUiLabelAcrossFrames(page, ['Gestão', 'GESTÃO']);
         await page.waitForTimeout(1500);
-        clicked = await clickUiLabel(page, target.labels);
+        clicked = await clickUiLabelAcrossFrames(page, target.labels);
       }
 
       if (!clicked.clicked) {
@@ -1098,6 +1170,7 @@ async function discoverSyonetScreens(config: SyonetRealConfig, page: Page): Prom
 
       await page.waitForTimeout(12000);
       const screen = await captureScreenDom(page);
+      const frames = await captureSyonetFrameInventory(page);
       const apiSummary = [...requests.entries()].map(([path, item]) => ({
         path,
         methods: [...item.methods],
@@ -1111,6 +1184,7 @@ async function discoverSyonetScreens(config: SyonetRealConfig, page: Page): Prom
         clickedLabel: clicked.label,
         clickedText: clicked.text,
         screen,
+        frames,
         apiSummary,
       }));
 
