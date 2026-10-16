@@ -283,17 +283,19 @@ export async function buildApp() {
     });
   }
 
-  // Only the read-only evaluator surface is available on Railway during
-  // production cutover. All operational mutations and Syonet sync endpoints
-  // are blocked even when someone calls the private API directly.
+  // Railway production keeps the HTTP surface read-only for the evaluator,
+  // while the internal Syonet collector may run when explicitly enabled.
+  // The external integration is still protected by the immutable Syonet
+  // read-only guard: only approved login requests and allowlisted GET APIs
+  // can reach Syonet; all business mutations are denied.
   if (process.env.CRM_DEPLOY_TARGET === 'railway') {
     if (
       !['production', 'test'].includes(process.env.NODE_ENV ?? '') ||
       process.env.CRM_EUROVIA_PRODUCTION_READONLY !== 'true' ||
       process.env.CRM_NEON_STAGING_MODE !== 'false' ||
-      process.env.SYNC_ENABLED !== 'false'
+      process.env.SYONET_USE_REAL !== 'true'
     ) {
-      throw new Error('Railway evaluator requires read-only production and disabled synchronization');
+      throw new Error('Railway production requires real Syonet read-only collection and disabled staging mode');
     }
     const allowedReads = new Set([
       '/health',
