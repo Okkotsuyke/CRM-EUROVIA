@@ -100,7 +100,10 @@ async function getBrowser(config: SyonetRealConfig): Promise<Browser> {
         executablePath: await serverlessChromium.default.executablePath(),
       });
     } else {
-      const executablePath = process.env.SYONET_CHROMIUM_EXECUTABLE_PATH;
+      // Railway/Docker installs the browser matching playwright-core
+      // under PLAYWRIGHT_BROWSERS_PATH during the image build.
+      const executablePath = process.env.SYONET_CHROMIUM_EXECUTABLE_PATH ||
+        (process.env.PLAYWRIGHT_BROWSERS_PATH ? playwrightChromium.executablePath() : undefined);
       if (!executablePath) {
         throw new Error('Syonet: defina SYONET_CHROMIUM_EXECUTABLE_PATH no ambiente local');
       }
