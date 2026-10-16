@@ -69,7 +69,7 @@ export function checkSyonetReadOnlyRequest(
       )
     );
 
-  if (!READ_METHODS.has(normalizedMethod) && !isApprovedLoginPost && !isApprovedSessionReadPost) {
+  if (!READ_METHODS.has(normalizedMethod) && !isApprovedLoginPost && !isApprovedSessionReadPost && !isApprovedDashboardReadPost) {
     return { allowed: false, reason: 'write-method-denied' };
   }
 
