@@ -40,6 +40,7 @@ async function syncCallback(): Promise<void> {
     const result = await runSync({
       screens: ['FUNIL', 'PRODUTIVIDADE'],
       incremental: true,
+      fullLoad: process.env.SYNC_FULL_LOAD === 'true',
     });
 
     if (result.totalErrors === 0) {
