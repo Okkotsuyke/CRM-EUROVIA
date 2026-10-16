@@ -1219,10 +1219,18 @@ export async function extractLeadsData(
     for (const empresaId of empresaIds) {
       try {
         for (let pageNumber = 0; pageNumber < MAX_PAGES_PER_STORE; pageNumber++) {
-          const response = await apiRequest(
-            page,
-            '/api/evento?idEmpresa=' + empresaId + '&page=' + pageNumber + '&size=' + PAGE_SIZE + '&sort=dataInc,desc'
-          );
+          const params = new URLSearchParams({
+            idEmpresa: String(empresaId),
+            page: String(pageNumber),
+            size: String(PAGE_SIZE),
+            sort: 'dataInc,desc',
+          });
+          if (dateRange) {
+            params.set('dataInicio', dateRange.start.toISOString().slice(0, 10));
+            params.set('dataFim', dateRange.end.toISOString().slice(0, 10));
+          }
+
+          const response = await apiRequest(page, '/api/evento?' + params.toString());
 
           if (pageNumber === 0) {
             console.log('🔎 Syonet /api/evento empresa ' + empresaId + ' status=' + response.status +
@@ -1237,7 +1245,22 @@ export async function extractLeadsData(
 
           if (items.length === 0) break;
 
-          console.log('   Empresa ' + empresaId + ', pagina ' + pageNumber + ': ' + items.length + ' eventos');
+          let pageOldestTime = Number.POSITIVE_INFINITY;
+          let pageValidDates = 0;
+          let pageInvalidDates = 0;
+          for (const item of items) {
+            const parsed = new Date(item.dataInc || item.dtInc || '');
+            const time = parsed.getTime();
+            if (Number.isFinite(time)) {
+              pageValidDates++;
+              pageOldestTime = Math.min(pageOldestTime, time);
+            } else {
+              pageInvalidDates++;
+            }
+          }
+
+          console.log('   Empresa ' + empresaId + ', pagina ' + pageNumber + ': ' + items.length +
+            ' eventos (datasValidas=' + pageValidDates + ', datasInvalidas=' + pageInvalidDates + ')');
 
           for (const item of items) {
             const resolvedStoreName =
@@ -1283,6 +1306,9 @@ export async function extractLeadsData(
           }
 
           if (items.length < PAGE_SIZE) break;
+          if (dateRange && Number.isFinite(pageOldestTime) && pageOldestTime < dateRange.start.getTime()) {
+            break;
+          }
         }
       } catch (err) {
         console.warn('Erro ao buscar eventos da empresa ' + empresaId + ':', err);
