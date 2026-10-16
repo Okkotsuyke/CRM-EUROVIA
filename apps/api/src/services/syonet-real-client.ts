@@ -1198,10 +1198,46 @@ async function discoverSyonetScreens(config: SyonetRealConfig, page: Page): Prom
     console.log('🔬 Syonet navigation inventory: ' + JSON.stringify(await captureScreenDom(page)));
     console.log('🔬 Syonet frame inventory: ' + JSON.stringify(await captureSyonetFrameInventory(page)));
 
+    const directDashboardHashes: Record<string, string[]> = {
+      DASH_VENDAS_189: ['#/dashboard/189', '#/dashboard?id=189'],
+      FUNIL_VENDAS_244: ['#/dashboard/244', '#/dashboard?id=244'],
+      ANALISE_LEADS_224: ['#/dashboard/224', '#/dashboard?id=224'],
+      ANALISE_LEADS_PRE_VENDA_374: ['#/dashboard/374', '#/dashboard?id=374'],
+      AGENDAMENTOS_137: ['#/dashboard/137', '#/dashboard?id=137'],
+      AGENDAMENTOS_141: ['#/dashboard/141', '#/dashboard?id=141'],
+      DASH_PRODUTIVIDADE_RESULTADO: ['#/dashboard/162', '#/dashboard?id=162'],
+    };
+
     for (const target of SYONET_SCREEN_TARGETS) {
       if (page.isClosed()) break;
       try {
       let clicked = await clickUiLabelAcrossFrames(page, target.labels);
+
+      // O shell autenticado mantém o módulo Eventos em um iframe (cic.do).
+      // Os dashboards são rotas SPA desse iframe; navegamos diretamente por
+      // hash somente quando a tela é um dashboard conhecido, evitando depender
+      // de menus visuais que podem não estar renderizados.
+      const dashboardHashes = directDashboardHashes[target.key] || [];
+      if (dashboardHashes.length > 0) {
+        const cicFrame = page.frames().find((frame) => {
+          try { return new URL(frame.url()).pathname.toLowerCase() === '/portal/cic.do'; } catch { return false; }
+        });
+        if (cicFrame) {
+          for (const hash of dashboardHashes) {
+            try {
+              await cicFrame.goto(config.baseUrl + '/portal/cic.do' + hash, {
+                waitUntil: 'domcontentloaded',
+                timeout: 30000,
+              });
+              await page.waitForTimeout(8000);
+              console.log('🔬 Syonet direct dashboard navigation ' + target.key + ': ' + cicFrame.url());
+              if (cicFrame.url().includes(hash.replace('?', '?'))) break;
+            } catch {}
+          }
+        }
+      }
+
+      if (!clicked.clicked) {
       if (!clicked.clicked) clicked = await clickUiLabel(page, target.labels);
 
       if (!clicked.clicked) {
