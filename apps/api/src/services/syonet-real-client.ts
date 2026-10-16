@@ -523,9 +523,9 @@ export async function syonetLogin(config: SyonetRealConfig): Promise<boolean> {
           const keywordContexts: Array<Record<string, unknown>> = [];
           for (const src of scripts) {
             try {
-              const res = await fetch(src, { method: 'GET', credentials: 'include' });
-              if (!res.ok) {
-                scriptMeta.push({ src: new URL(src).pathname, status: res.status });
+              const res = await (page.context() as any).request.get(src);
+              if (!res.ok()) {
+                scriptMeta.push({ src: new URL(src).pathname, status: res.status() });
                 continue;
               }
               const source = (await res.text()).slice(0, 6_000_000);
