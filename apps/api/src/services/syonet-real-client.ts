@@ -634,6 +634,17 @@ export async function extractFunilData(config: SyonetRealConfig, filters?: {
             { key: 'empresa', value: String(empresaId) },
             { key: 'idEmpresa', value: String(empresaId) },
           ];
+          const definitionCandidates = ['/api/dataset/664', '/api/dataset/665', '/api/dataset/678'];
+          for (const candidate of definitionCandidates) {
+            try {
+              const definition = await apiRequest(page, candidate);
+              console.log('🔎 Syonet dataset definition ' + candidate + ' status=' + definition.status +
+                ' shape=' + summarizeSyonetPayload(definition.data));
+            } catch {
+              console.log('🔎 Syonet dataset definition ' + candidate + ' erro=consulta');
+            }
+          }
+
           const candidates = [
             '/api/dashboard/189/dados',
             '/api/dashboard/189/data',
