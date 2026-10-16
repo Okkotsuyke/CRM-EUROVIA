@@ -1237,7 +1237,6 @@ async function discoverSyonetScreens(config: SyonetRealConfig, page: Page): Prom
         }
       }
 
-      if (!clicked.clicked) {
       if (!clicked.clicked) clicked = await clickUiLabel(page, target.labels);
 
       if (!clicked.clicked) {
