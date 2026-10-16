@@ -10,7 +10,7 @@
  * - Home:  https://viasul.syonet.com/portal/acessaSistema.do#/cic.do
  */
 
-import { chromium, Browser, Page, BrowserContext } from 'playwright';
+import { chromium, Browser, Page, BrowserContext } from 'playwright-core';
 import { installSyonetReadOnlyGuard } from './syonet-readonly-guard';
 import {
   normalizeMedia,
