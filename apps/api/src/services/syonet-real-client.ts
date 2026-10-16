@@ -441,6 +441,18 @@ async function discoverDashboardData(
   }
 
   const captured: Array<{ url: string; status: number; data: unknown }> = [];
+  const requestedApiPaths = new Set<string>();
+  const requestHandler = (request: any) => {
+    try {
+      const url = request.url();
+      if (!url.startsWith(config.baseUrl) || !url.includes('/api/')) return;
+      requestedApiPaths.add(request.method() + ' ' + new URL(url).pathname);
+    } catch {
+      // Ignore malformed request metadata.
+    }
+  };
+  page.on('request', requestHandler);
+
   const handler = async (response: any) => {
     try {
       if (response.request().method() !== 'GET') return;
@@ -491,6 +503,11 @@ async function discoverDashboardData(
     }
   } finally {
     page.off('response', handler);
+    page.off('request', requestHandler);
+  }
+
+  if (requestedApiPaths.size) {
+    console.log('🔎 Syonet API requests observed: ' + JSON.stringify([...requestedApiPaths].slice(0, 80)));
   }
 
   if (captured.length) {
