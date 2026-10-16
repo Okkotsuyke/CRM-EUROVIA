@@ -474,6 +474,18 @@ async function discoverDashboardData(
   page.on('response', handler);
   try {
     // Descobrir a rota real do módulo pelo menu renderizado após o login.
+    const shellInfo = await page.evaluate(() => ({
+      url: location.href,
+      title: document.title,
+      iframes: Array.from(document.querySelectorAll('iframe')).map((x: HTMLIFrameElement) => x.src).filter(Boolean).slice(0, 20),
+      scripts: Array.from(document.scripts).map((x: HTMLScriptElement) => x.src).filter(Boolean).slice(0, 40),
+      links: Array.from(document.querySelectorAll('a')).map((x: HTMLAnchorElement) => ({
+        text: (x.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 100),
+        href: x.href || '',
+      })).filter(x => x.text || x.href).slice(0, 50),
+    }));
+    console.log('🔎 Syonet shell info: ' + JSON.stringify(shellInfo));
+
     const navTargets = await page.evaluate(() =>
       Array.from(document.querySelectorAll('a,button'))
         .map((el: Element) => ({
