@@ -795,10 +795,12 @@ export async function syonetLogin(config: SyonetRealConfig): Promise<boolean> {
         }
       }
       if (process.env.SYONET_DISCOVER_SCREENS === 'true') {
-        try {
-          await discoverSyonetDashboardSources(config, page);
-        } catch (error) {
-          console.warn('⚠️ Syonet: descoberta de fontes do dashboard falhou; login continua válido');
+        if (process.env.SYONET_DISCOVER_DASHBOARD_SOURCES !== 'false') {
+          try {
+            await discoverSyonetDashboardSources(config, page);
+          } catch (error) {
+            console.warn('⚠️ Syonet: descoberta de fontes do dashboard falhou; login continua válido');
+          }
         }
         try {
           await discoverSyonetScreens(config, page);
@@ -1279,7 +1281,8 @@ async function discoverSyonetScreens(config: SyonetRealConfig, page: Page): Prom
               });
               await page.waitForTimeout(8000);
               console.log('🔬 Syonet direct dashboard navigation ' + target.key + ': ' + cicFrame.url());
-              if (cicFrame.url().includes(hash.replace('?', '?'))) break;
+              clicked = { clicked: true, label: 'direct:' + hash, text: target.labels[0], frameUrl: cicFrame.url() };
+              break;
             } catch {}
           }
         }
