@@ -461,8 +461,8 @@ async function discoverDashboardData(
           if (!res.ok) return '';
           return (await res.text()).slice(0, 2_000_000);
         }, src);
-        for (const match of bundleText.matchAll(/["'\`]((?:\\/)?api\\/[^"'\`\\s]{2,180})["'\`]/g)) {
-          const candidate = match[1].replace(/^\\//, '/');
+        const matches = bundleText.match(/\\/api\\/[A-Za-z0-9_.$?=&%{}:/-]{2,180}/g) || [];
+        for (const candidate of matches) {
           if (/dashboard|dataset|widget|funil|produtividade|evento|empresa|usuario/i.test(candidate)) {
             discoveredApiPaths.add(candidate.split('?')[0]);
           }
