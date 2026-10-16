@@ -808,6 +808,7 @@ export async function extractFunilData(config: SyonetRealConfig, filters?: {
               console.log('🔎 Syonet dataset definition ' + candidate + ' status=' + definition.status +
                 ' shape=' + summarizeSyonetPayload(definition.data));
               console.log('🔎 Syonet dataset query ' + candidate + ': ' + JSON.stringify(summarizeDatasetQuery(definitionData?.query)));
+              console.log('🔎 Syonet dataset dataSource ' + candidate + ': ' + JSON.stringify(summarizeDatasetQuery(definitionData?.dataSource)));
             } catch {
               console.log('🔎 Syonet dataset definition ' + candidate + ' erro=consulta');
             }
