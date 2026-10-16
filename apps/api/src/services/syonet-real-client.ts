@@ -182,6 +182,7 @@ async function apiRequest(page: Page, endpoint: string, options: RequestInit = {
   const response = await page.evaluate(async (args: {
     url: string;
     cookie: string;
+    basicAuth?: string;
     options: RequestInit;
     timeoutMs: number;
   }) => {
@@ -193,6 +194,7 @@ async function apiRequest(page: Page, endpoint: string, options: RequestInit = {
         signal: controller.signal,
         headers: {
           'Cookie': args.cookie,
+          ...(args.basicAuth ? { 'Authorization': 'Basic ' + args.basicAuth } : {}),
           'Content-Type': 'application/json',
           'Accept': 'application/json',
           ...(args.options.headers || {})
@@ -214,7 +216,15 @@ async function apiRequest(page: Page, endpoint: string, options: RequestInit = {
     } finally {
       window.clearTimeout(timer);
     }
-  }, { url, cookie: cookies, options, timeoutMs }) as { status: number; data: unknown; error?: string };
+  }, {
+    url,
+    cookie: cookies,
+    basicAuth: process.env.SYONET_USERNAME && process.env.SYONET_PASSWORD
+      ? Buffer.from(process.env.SYONET_USERNAME + ':' + process.env.SYONET_PASSWORD).toString('base64')
+      : undefined,
+    options,
+    timeoutMs,
+  }) as { status: number; data: unknown; error?: string };
 
   if (response.status === 401 || response.status === 403) {
     throw new Error('Não autenticado na API do Syonet');
