@@ -524,64 +524,61 @@ export async function syonetLogin(config: SyonetRealConfig): Promise<boolean> {
       lastLoginTime = Date.now();
       if (process.env.SYONET_DISCOVER_BUNDLE === 'true') {
         try {
-          const bundleInfo = await page.evaluate(async (baseUrl) => {
+          const scripts = await page.evaluate((baseUrl) => {
             const entries = performance.getEntriesByType('resource') as PerformanceResourceTiming[];
-            const scripts = [...new Set(entries.map((e) => e.name)
+            return [...new Set(entries.map((e) => e.name)
               .filter((name) => name.startsWith(baseUrl) && /\.js(?:[?#]|$)/i.test(name)))].slice(0, 40);
-            const findings: Array<{path: string; matches: string[]}> = [];
-            const fetchDiagnostics: Array<{path: string; status: number; length: number; terms: Record<string, number>}> = [];
-            for (const src of scripts) {
-              try {
-                const response = await fetch(src, { credentials: 'include' });
-                const text = await response.text();
-                const lower = text.toLowerCase();
-                const terms: Record<string, number> = {};
-                for (const term of ['dataset', 'dashboard', 'idDataset', '/api/', 'execute', 'executar', 'consulta', 'query']) {
-                  terms[term] = lower.split(term.toLowerCase()).length - 1;
-                }
-                fetchDiagnostics.push({ path: new URL(src).pathname, status: response.status, length: text.length, terms });
-                const matches: string[] = [];
-                const patterns = [
-                  /\/api\/[A-Za-z0-9_?&=\/$.:-]{0,180}/g,
-                  /(?:dataset|dashboard|consulta|query|execute|executar|widget)[A-Za-z0-9_?&=\/$.: -]{0,100}/gi,
-                ];
-                for (const pattern of patterns) {
-                  for (const match of text.matchAll(pattern)) {
-                    const value = match[0];
-                    if (!matches.includes(value)) matches.push(value);
-                    if (matches.length >= 80) break;
-                  }
-                  if (matches.length >= 80) break;
-                }
-                const contextSnippets: string[] = [];
-                for (const term of ['dataset', 'dashboard', 'idDataset', 'execute', 'executar', 'consulta', 'query']) {
-                  let from = 0;
-                  for (let hit = 0; hit < 8; hit++) {
-                    const index = text.toLowerCase().indexOf(term.toLowerCase(), from);
-                    if (index < 0) break;
-                    const snippet = text.slice(Math.max(0, index - 180), Math.min(text.length, index + 420))
-                      .replace(/\\s+/g, ' ')
-                      .replace(/(['"])(?:\\\\.|(?!\\1).)*\\1/g, '$1<redacted>$1');
-                    contextSnippets.push(term + ': ' + snippet);
-                    from = index + term.length;
-                  }
-                }
-                findings.push({ path: new URL(src).pathname, matches: [...matches, ...contextSnippets].slice(0, 160) });
-                if (matches.length) {
-                  findings.push({ path: new URL(src).pathname, matches });
-                }
-              } catch {}
-            }
-            return { scripts, findings, fetchDiagnostics };
           }, config.baseUrl);
-          console.log('🔎 Syonet JS resources: ' + JSON.stringify(bundleInfo.scripts));
-          console.log('🔎 Syonet JS fetch diagnostics: ' + JSON.stringify(bundleInfo.fetchDiagnostics));
-          console.log('🔎 Syonet JS API route findings: ' + JSON.stringify(bundleInfo.findings));
+
+          const findings: Array<{ path: string; status: number; length: number; terms: Record<string, number>; snippets: string[] }> = [];
+          for (const src of scripts) {
+            try {
+              const response = await page.request.get(src, { timeout: 30000 });
+              const text = await response.text();
+              const lower = text.toLowerCase();
+              const terms: Record<string, number> = {};
+              for (const term of ['dataset', 'dashboard', 'iddataset', '/api/', 'execute', 'executar', 'consulta', 'query']) {
+                terms[term] = lower.split(term.toLowerCase()).length - 1;
+              }
+
+              const snippets: string[] = [];
+              for (const term of ['dataset', 'dashboard', 'idDataset', 'execute', 'executar', 'consulta', 'query']) {
+                let from = 0;
+                for (let hit = 0; hit < 6; hit++) {
+                  const index = lower.indexOf(term.toLowerCase(), from);
+                  if (index < 0) break;
+                  const snippet = text.slice(Math.max(0, index - 180), Math.min(text.length, index + 420))
+                    .replace(/\s+/g, ' ')
+                    .replace(/(['"])(?:\\.|(?!\\1).)*\\1/g, '$1<redacted>$1');
+                  snippets.push(term + ': ' + snippet);
+                  from = index + term.length;
+                }
+              }
+
+              findings.push({
+                path: new URL(src).pathname,
+                status: response.status(),
+                length: text.length,
+                terms,
+                snippets: snippets.slice(0, 80),
+              });
+            } catch (error) {
+              findings.push({
+                path: new URL(src).pathname,
+                status: 0,
+                length: 0,
+                terms: {},
+                snippets: ['fetch-error'],
+              });
+            }
+          }
+          console.log('🔎 Syonet JS resources: ' + JSON.stringify(scripts));
+          console.log('🔎 Syonet JS bundle diagnostics: ' + JSON.stringify(findings));
         } catch {
           console.warn('⚠️ Falha ao inspecionar bundles JS do Syonet');
         }
       }
-            console.log('✅ Syonet: Login realizado com sucesso');
+      console.log('✅ Syonet: Login realizado com sucesso');
       return true;
     } else {
       console.error('❌ Syonet: Login falhou - ainda na página de login');
