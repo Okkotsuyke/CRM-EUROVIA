@@ -1,0 +1,36 @@
+# Build context must be the monorepo root.
+# Railway service: crm-eurovia-api
+# RAILWAY_DOCKERFILE_PATH=Dockerfile.railway.api
+FROM node:24-bookworm-slim
+
+WORKDIR /opt/crm
+
+RUN npm install --global pnpm@9.0.0
+
+# Install from the *committed*, reproducible monorepo lockfile.
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY apps/api/package.json ./apps/api/package.json
+COPY apps/web/package.json ./apps/web/package.json
+COPY packages/shared/package.json ./packages/shared/package.json
+RUN pnpm install --frozen-lockfile --filter '@crm/api...'
+
+COPY apps/api ./apps/api
+COPY packages/shared ./packages/shared
+
+# Unlike ephemeral serverless functions, this container has its own Chromium.
+# Browser binaries and native Linux libraries are installed during image build.
+# Playwright's executablePath() always matches its pinned runtime version.
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
+RUN pnpm --filter @crm/api exec playwright install --with-deps chromium
+RUN pnpm --filter @crm/api run build
+
+RUN chmod -R a+rX /opt/ms-playwright
+
+ENV NODE_ENV=production
+ENV SYONET_HEADLESS=true
+ENV PORT=3001
+
+WORKDIR /opt/crm/apps/api
+USER node
+EXPOSE 3001
+CMD ["node", "dist/src/server.js"]
