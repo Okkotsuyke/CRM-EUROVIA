@@ -540,173 +540,35 @@ export async function syonetLogin(config: SyonetRealConfig): Promise<boolean> {
       isLoggedIn = true;
       lastLoginTime = Date.now();
       if (process.env.SYONET_DISCOVER_UI === 'true') {
-        try {
-          const dashboardElements = await page.evaluate(() => Array.from(document.querySelectorAll('*'))
-            .map((el: any) => ({
-              tag: String(el.tagName || ''),
-              text: String(el.innerText || el.textContent || '').trim().slice(0, 100),
-              role: String(el.getAttribute?.('role') || ''),
-              aria: String(el.getAttribute?.('aria-label') || ''),
-            }))
-            .filter((x) => /^dashboard$/i.test(x.text) || /dashboard/i.test(x.aria))
-            .slice(0, 80));
-          console.log('🔎 Syonet dashboard elements: ' + JSON.stringify(dashboardElements));
-
-          const dashboardTarget = page.getByText('Dashboard', { exact: true }).first();
-          if (await dashboardTarget.count()) {
-            await dashboardTarget.click({ timeout: 5000 }).catch(() => {});
-            await page.waitForTimeout(15000);
-            console.log('🔎 Syonet dashboard navigation after click: ' + page.url() + ' hash=' + await page.evaluate(() => window.location.hash));
-          }
-        } catch {
-          console.warn('⚠️ Falha ao interagir com navegação Dashboard do Syonet');
-        }
-      }
-
-      if (process.env.SYONET_DISCOVER_BUNDLE === 'true') {
-        try {
-          const scripts = await page.evaluate((baseUrl) => {
-            const entries = performance.getEntriesByType('resource') as PerformanceResourceTiming[];
-            return [...new Set(entries.map((e) => e.name)
-              .filter((name) => name.startsWith(baseUrl) && /\.js(?:[?#]|$)/i.test(name)))].slice(0, 40);
-          }, config.baseUrl);
-
-          const findings: Array<{ path: string; status: number; length: number; terms: Record<string, number>; snippets: string[] }> = [];
-          for (const src of scripts) {
-            try {
-              const response = await page.request.get(src, { timeout: 30000 });
-              const text = await response.text();
-              const lower = text.toLowerCase();
-              const terms: Record<string, number> = {};
-              for (const term of ['dataset', 'dashboard', 'iddataset', '/api/', 'execute', 'executar', 'consulta', 'query']) {
-                terms[term] = lower.split(term.toLowerCase()).length - 1;
-              }
-
-              const snippets: string[] = [];
-              for (const term of ['dataset', 'dashboard', 'idDataset', '/api/', 'execute', 'executar', 'consulta', 'query']) {
-                let from = 0;
-                for (let hit = 0; hit < 6; hit++) {
-                  const index = lower.indexOf(term.toLowerCase(), from);
-                  if (index < 0) break;
-                  const snippet = text.slice(Math.max(0, index - 180), Math.min(text.length, index + 420))
-                    .replace(/\s+/g, ' ')
-                    .replace(/(['"])(?:\\.|(?!\\1).)*\\1/g, '$1<redacted>$1');
-                  snippets.push(term + ': ' + snippet);
-                  from = index + term.length;
-                }
-              }
-
-              findings.push({
-                path: new URL(src).pathname,
-                status: response.status(),
-                length: text.length,
-                terms,
-                snippets: snippets.slice(0, 80),
-              });
-            } catch (error) {
-              findings.push({
-                path: new URL(src).pathname,
-                status: 0,
-                length: 0,
-                terms: {},
-                snippets: ['fetch-error'],
-              });
-            }
-          }
-          console.log('🔎 Syonet JS resources: ' + JSON.stringify(scripts));
-          console.log('🔎 Syonet JS bundle diagnostics: ' + JSON.stringify(findings));
-        } catch {
-          console.warn('⚠️ Falha ao inspecionar bundles JS do Syonet');
-        }
-      }
-      console.log('✅ Syonet: Login realizado com sucesso');
-      return true;
-    } else {
-      console.error('❌ Syonet: Login falhou - ainda na página de login');
-      return false;
-    }
-  } catch (error) {
-    console.error('❌ Syonet: Erro no login:', error);
-    isLoggedIn = false;
-    return false;
-  }
-}
-
-/**
- * Verifica se está autenticado (com verificação de cache)
- */
-export function isSyonetAuthenticated(): boolean {
-  return isSessionValid();
-}
-
-/**
- * Extrai dados da tela de Funil/Gestão (Tela 1)
- *
- * Usa a API REST para obter métricas do funil de vendas
- * Dashboard ID 189: Incluidos / Agendados / Comparecidos / Vendas
- */
-export async function extractFunilData(config: SyonetRealConfig, filters?: {
-  empresaIds?: number[];
-  dataInicio?: string;
-  dataFim?: string;
-}): Promise<FunilMetrics[]> {
-  // Usar sessão em cache se disponível
-  if (!isSessionValid()) {
-    const logged = await syonetLogin(config);
-    if (!logged) throw new Error('Falha ao autenticar no Syonet');
-  }
-
-  const page = pageInstance!;
-  const metrics: FunilMetrics[] = [];
-
-  try {
-    if (process.env.SYONET_DISCOVER_UI === 'true') {
       try {
-        const observed = new Set<string>();
-        const onRequest = (req: any) => {
-          try {
-            const url = req.url();
-            if (url.startsWith(config.baseUrl) && url.includes('/api/')) {
-              observed.add(req.method() + ' ' + new URL(url).pathname + new URL(url).search);
-            }
-          } catch {}
-        };
-        page.on('request', onRequest);
-        for (const route of [
-          config.baseUrl + '/portal/acessaSistema.do#/dashboard/189',
+        const candidates = [
+          config.baseUrl + '/portal/app.do?modulo=dashboard&id=189',
+          config.baseUrl + '/portal/app.do?modulo=dashboard',
+          config.baseUrl + '/portal/appV2/portal/appV2/index.html#/dashboard.do?id=189',
           config.baseUrl + '/portal/acessaSistema.do#/dashboard.do?id=189',
-        ]) {
+        ];
+        for (const route of candidates) {
           try {
             await page.goto(route, { waitUntil: 'domcontentloaded', timeout: 30000 });
-            await page.waitForTimeout(10000);
-          } catch {}
-          if ([...observed].some((x) => /dataset|query|execute|dashboard/i.test(x))) break;
+            await page.waitForTimeout(12000);
+            const state = await page.evaluate(() => ({
+              url: location.href,
+              hash: location.hash,
+              title: document.title,
+              bodyLength: document.body?.innerText?.length || 0,
+              scripts: Array.from(document.scripts).map((s) => s.src).filter(Boolean).slice(-30),
+              resources: performance.getEntriesByType('resource')
+                .map((e: any) => String(e.name))
+                .filter((name) => name.includes('/api/') || /\.js(?:[?#]|$)/i.test(name))
+                .slice(-120),
+            }));
+            console.log('🔎 Syonet UI candidate: ' + route + ' state=' + JSON.stringify(state));
+          } catch (error) {
+            console.log('🔎 Syonet UI candidate error: ' + route);
+          }
         }
-        page.off('request', onRequest);
-        const uiHints = await page.evaluate(() => {
-          const hash = window.location.hash;
-          const resources = performance.getEntriesByType('resource')
-            .map((entry: any) => ({
-              name: String(entry.name),
-              initiatorType: String(entry.initiatorType || ''),
-              duration: Number(entry.duration || 0),
-            }))
-            .filter((entry) => entry.name.includes('/api/'))
-            .slice(-300);
-          const links = Array.from(document.querySelectorAll('a,button,[role="link"]'))
-            .map((el: any) => ({
-              text: String(el.innerText || el.textContent || '').trim().slice(0, 120),
-              href: String(el.getAttribute('href') || '').slice(0, 300),
-              route: String(el.getAttribute('data-route') || el.getAttribute('data-path') || '').slice(0, 300),
-            }))
-            .filter((x) => /dashboard|painel|kpi/i.test(x.text + ' ' + x.href + ' ' + x.route))
-            .slice(0, 100);
-          return { hash, links, resources };
-        });
-        console.log('🔎 Syonet UI dashboard hints: ' + JSON.stringify(uiHints));
-        console.log('🔎 Syonet UI dashboard requests: ' + JSON.stringify([...observed].slice(0, 200)));
       } catch {
-        console.warn('⚠️ Falha ao descobrir chamadas do dashboard pela UI');
+        console.warn('⚠️ Falha ao descobrir rota de Dashboard do Syonet');
       }
     }
 
