@@ -47,6 +47,10 @@ export function checkSyonetReadOnlyRequest(
       (
         destination.pathname.toLowerCase() === '/portal/validarlogonusuario.do' &&
         destination.searchParams.has('opcaoAtualizacao')
+      ) ||
+      (
+        /^\/api\/auth\/token\/?$/i.test(destination.pathname) &&
+        destination.searchParams.size === 0
       )
     );
 
