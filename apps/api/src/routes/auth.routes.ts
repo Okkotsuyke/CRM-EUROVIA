@@ -4,6 +4,10 @@
 import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import bcrypt from 'bcryptjs';
+import {
+  NeonAccessDenied, neonSignInUser, neonRefreshUser,
+  neonLogoutUser, withNeonOperationalPrincipal,
+} from '../services/neon-auth-bridge';
 
 const LoginSchema = z.object({
   username: z.string().min(1),
@@ -11,6 +15,83 @@ const LoginSchema = z.object({
 });
 
 export const authRoutes: FastifyPluginAsync = async (fastify) => {
+  if (process.env.CRM_NEON_STAGING_MODE === 'true') {
+    // Auth SQL functions use SECURITY DEFINER with narrow results.
+    // Only synthetic staging accounts exist; no direct password SELECT.
+    fastify.post('/login', {
+      config: { rateLimit: { max: 5, timeWindow: '1 minute' } },
+    }, async (request, reply) => {
+      const body = LoginSchema.parse(request.body);
+      const session = await neonSignInUser(fastify.prisma, body.username, body.password);
+      if (!session) return reply.status(401).send({
+        statusCode: 401, message: 'Invalid credentials', error: 'Unauthorized',
+      });
+      return {
+        accessToken: fastify.jwt.sign({ id: session.user_id }, { expiresIn: '15m' }),
+        refreshToken: session.refresh_token,
+        user: {
+          id: session.user_id,
+          name: session.display_name,
+          username: session.user_name,
+          email: session.email,
+          role: session.user_role,
+          storeId: session.store_id,
+        },
+      };
+    });
+
+    fastify.post('/refresh', {
+      config: { rateLimit: { max: 15, timeWindow: '1 minute' } },
+    }, async (request, reply) => {
+      const body = z.object({
+        refreshToken: z.string().regex(/^[a-f0-9]{64}$/),
+      }).parse(request.body);
+      const session = await neonRefreshUser(fastify.prisma, body.refreshToken);
+      if (!session) return reply.status(401).send({
+        statusCode: 401, message: 'Invalid refresh token', error: 'Unauthorized',
+      });
+      // Refresh tokens are single-use and rotated in the SAME DB transaction.
+      return {
+        accessToken: fastify.jwt.sign({ id: session.user_id }, { expiresIn: '15m' }),
+        refreshToken: session.refresh_token,
+      };
+    });
+
+    fastify.post('/logout', async request => {
+      const body = z.object({
+        refreshToken: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+      }).parse(request.body || {});
+      if (body.refreshToken) await neonLogoutUser(fastify.prisma, body.refreshToken);
+      return { message: 'Logged out successfully' };
+    });
+
+    fastify.get('/me', async (request, reply) => {
+      let claims: unknown;
+      try { claims = await request.jwtVerify(); }
+      catch { return reply.status(401).send({ statusCode: 401, error: 'Unauthorized' }); }
+      try {
+        return await withNeonOperationalPrincipal(fastify.prisma, claims, async (tx, user) => {
+          // User and store are read within the SAME SET LOCAL RLS transaction.
+          const store = user.storeId ? await tx.store.findFirst({
+            where: { id: user.storeId },
+            select: { id: true, shortName: true, plaza: true },
+          }) : null;
+          return {
+            id: user.id, name: user.name, username: user.username,
+            email: user.email, role: user.role, storeId: user.storeId, store,
+          };
+        });
+      } catch (error) {
+        if (error instanceof NeonAccessDenied) return reply.status(401).send({
+          statusCode: 401, error: 'Unauthorized',
+        });
+        throw error;
+      }
+    });
+    return;
+  }
+
+
   // POST /api/v1/auth/login
   // Rate limit específico: 5 tentativas por minuto (proteção brute force)
   fastify.post('/login', {

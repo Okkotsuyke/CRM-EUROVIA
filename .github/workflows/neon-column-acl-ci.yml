@@ -1,0 +1,93 @@
+name: CRM Eurovia - Neon Sensitive Column ACL
+on:
+  push:
+    branches: [fix/eurovia-hardening-deploy-20261015]
+    paths:
+      - 'apps/api/prisma/migrations/20261015_neon_sensitive_column_acl/migration.sql'
+      - 'scripts/security/neon-column-acl-ci.sh'
+      - 'apps/api/src/__tests__/neon-postgres-http.integration.test.ts'
+      - '.github/workflows/neon-column-acl-ci.yml'
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'apps/api/prisma/migrations/20261015_neon_sensitive_column_acl/migration.sql'
+      - 'scripts/security/neon-column-acl-ci.sh'
+      - 'apps/api/src/__tests__/neon-postgres-http.integration.test.ts'
+      - '.github/workflows/neon-column-acl-ci.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  deny-raw-column-access:
+    name: PostgreSQL 17 - verify real column privilege denials
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci-only-neon-acl
+          POSTGRES_DB: crm_eurovia
+        ports: [5432:5432]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d crm_eurovia"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      CRM_EUROVIA_ACL_CI: '1'
+      NODE_ENV: test
+      SYONET_USE_REAL: 'false'
+      SYNC_ENABLED: 'false'
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGUSER: postgres
+      PGPASSWORD: ci-only-neon-acl
+      PGDATABASE: crm_eurovia
+      DATABASE_URL: postgresql://postgres:ci-only-neon-acl@127.0.0.1:5432/crm_eurovia?schema=public
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+      - name: PostgreSQL client
+        run: |
+          if ! command -v psql >/dev/null 2>&1; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+          fi
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Canonical schema in isolated database
+        run: pnpm --filter @crm/api exec prisma db push --skip-generate
+      - name: Exercise Neon ACL and deny raw Syonet payloads
+        run: bash scripts/security/neon-column-acl-ci.sh
+      - name: Prepare CI-only authentication functions and restricted LOGIN
+        run: |
+          set -euo pipefail
+          psql -X -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE ROLE crm_eurovia_ci_login LOGIN NOINHERIT NOBYPASSRLS NOCREATEDB NOCREATEROLE PASSWORD 'ci-only-login';
+          GRANT crm_eurovia_runtime TO crm_eurovia_ci_login WITH INHERIT FALSE, SET TRUE;
+          SQL
+          psql -X -v ON_ERROR_STOP=1 -f apps/api/prisma/migrations/20261015_neon_auth_bridge/migration.sql >/dev/null
+          psql -X -v ON_ERROR_STOP=1 <<'SQL'
+          UPDATE public.users
+            SET password=crm_crypto.crypt('ci-only-user-password',crm_crypto.gen_salt('bf',8))
+            WHERE id IN ('ci-acl-user-a','ci-acl-user-b');
+          SQL
+      - name: Fastify real PostgreSQL authenticated HTTP RLS
+        env:
+          CRM_NEON_STAGING_MODE: 'true'
+          CRM_EUROVIA_PG_E2E_CI: '1'
+          JWT_SECRET: test-eurovia-only-signing-key-for-disposable-ci-2026
+          DATABASE_URL: postgresql://crm_eurovia_ci_login:ci-only-login@127.0.0.1:5432/crm_eurovia?schema=public
+        run: pnpm --filter @crm/api exec vitest run src/__tests__/neon-postgres-http.integration.test.ts
+      - name: Verify no active CI refresh token survived
+        run: |
+          count="$(psql -X -At -v ON_ERROR_STOP=1 -c 'SELECT COUNT(*)::int FROM public.refresh_tokens WHERE expires_at > now()')"
+          test "$count" = 0
+

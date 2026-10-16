@@ -1,0 +1,69 @@
+name: CRM Eurovia - Neon Auth Bridge CI
+
+on:
+  push:
+    branches: [fix/eurovia-hardening-deploy-20261015]
+    paths:
+      - 'apps/api/prisma/migrations/20261015_neon_auth_bridge/migration.sql'
+      - 'scripts/security/neon-auth-ci.sh'
+      - '.github/workflows/neon-auth-ci.yml'
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'apps/api/prisma/migrations/20261015_neon_auth_bridge/migration.sql'
+      - 'scripts/security/neon-auth-ci.sh'
+      - '.github/workflows/neon-auth-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  authentication:
+    name: PostgreSQL 17 - login and opaque token rotation
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: eurovia-ci-only
+          POSTGRES_DB: crm_eurovia
+        ports: [5432:5432]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d crm_eurovia"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      NODE_ENV: test
+      SYONET_USE_REAL: 'false'
+      SYNC_ENABLED: 'false'
+      CRM_EUROVIA_AUTH_CI: '1'
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGDATABASE: crm_eurovia
+      PGUSER: postgres
+      PGPASSWORD: eurovia-ci-only
+      DATABASE_URL: postgresql://postgres:eurovia-ci-only@127.0.0.1:5432/crm_eurovia?schema=public
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+      - name: PostgreSQL client
+        run: |
+          if ! command -v psql >/dev/null 2>&1; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+          fi
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Create canonical schema in ephemeral DB
+        run: pnpm --filter @crm/api exec prisma db push --skip-generate
+      - name: Exercise SQL authentication and refresh rotation
+        run: bash scripts/security/neon-auth-ci.sh

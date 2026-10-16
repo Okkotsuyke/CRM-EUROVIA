@@ -3,7 +3,7 @@
  * Lead guarda apenas os IDs (assigned_vl_id, assigned_vs_id, assigned_bdc_id) sem relação Prisma,
  * então os usuários são buscados em lote e anexados ao resultado.
  */
-import { PrismaClient } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 
 export type UserSummary = { id: string; name: string; username: string };
 
@@ -20,7 +20,7 @@ export type WithAssignees<T> = T & {
 };
 
 export async function attachAssignees<T extends LeadAssigneeIds>(
-  prisma: PrismaClient,
+  prisma: Pick<Prisma.TransactionClient, 'user'>,
   leads: T[],
 ): Promise<WithAssignees<T>[]> {
   const ids = new Set<string>();
@@ -48,7 +48,7 @@ export async function attachAssignees<T extends LeadAssigneeIds>(
 }
 
 export async function attachLeadAssignees<L extends LeadAssigneeIds, A extends { lead: L }>(
-  prisma: PrismaClient,
+  prisma: Pick<Prisma.TransactionClient, 'user'>,
   appointments: A[],
 ): Promise<(Omit<A, 'lead'> & { lead: WithAssignees<L> })[]> {
   const leads = await attachAssignees(prisma, appointments.map(a => a.lead));

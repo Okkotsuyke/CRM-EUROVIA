@@ -6,9 +6,20 @@
 
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { authenticateDashboard } from '../middleware/auth.middleware';
+import { Prisma } from '@prisma/client';
 
 export async function analyticsRoutes(fastify: FastifyInstance) {
   fastify.addHook('onRequest', authenticateDashboard);
+  // allowedStores sempre vem do banco no middleware. [] nunca significa
+  // acesso global, mesmo para ADMIN do modulo de avaliacao.
+  fastify.addHook('preHandler', async (request, reply) => {
+    if (!request.dashboardUser.allowedStores?.length) {
+      return reply.status(403).send({
+        success: false,
+        error: 'Nenhuma loja autorizada para este avaliador',
+      });
+    }
+  });
 
   /**
    * GET /api/v1/analytics/overview
@@ -31,6 +42,7 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
         FROM sync_metrics sm
         WHERE sm.extraction_date >= ${startDate}
           AND sm.extraction_date <= ${endDate}
+          AND sm.store_id IN (${Prisma.join(request.dashboardUser.allowedStores)})
           AND sm.vl_user_id IS NULL
           AND sm.media_source_id IS NULL
       `;
@@ -86,6 +98,7 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
         JOIN stores s ON sm.store_id = s.id
         WHERE sm.extraction_date >= ${startDate}
           AND sm.extraction_date <= ${endDate}
+          AND sm.store_id IN (${Prisma.join(request.dashboardUser.allowedStores)})
           AND sm.vl_user_id IS NULL
           AND sm.media_source_id IS NULL
         GROUP BY s.id, s."shortName", s.plaza
@@ -147,6 +160,7 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
         JOIN stores s ON sm.store_id = s.id
         WHERE sm.extraction_date >= ${startDate}
           AND sm.extraction_date <= ${endDate}
+          AND sm.store_id IN (${Prisma.join(request.dashboardUser.allowedStores)})
           AND sm.vl_user_id IS NOT NULL
           AND u.role = 'VL_CONSULTANT'
         GROUP BY u.id, u.name, u.username, s."shortName"
@@ -204,6 +218,7 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
         JOIN media_sources ms ON sm.media_source_id = ms.id
         WHERE sm.extraction_date >= ${startDate}
           AND sm.extraction_date <= ${endDate}
+          AND sm.store_id IN (${Prisma.join(request.dashboardUser.allowedStores)})
           AND sm.media_source_id IS NOT NULL
           AND sm.vl_user_id IS NULL
         GROUP BY ms."normalizedName", ms.category
@@ -252,6 +267,7 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
           COALESCE(SUM(sm.sales_total), 0)::int AS total_sales
         FROM sync_metrics sm
         WHERE sm.extraction_date >= ${startDate}
+          AND sm.store_id IN (${Prisma.join(request.dashboardUser.allowedStores)})
           AND sm.vl_user_id IS NULL
           AND sm.media_source_id IS NULL
         GROUP BY sm.extraction_date
@@ -295,6 +311,7 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
 
       const snapshots = await fastify.prisma.productivitySnapshot.findMany({
         where: {
+          storeId: { in: request.dashboardUser.allowedStores },
           periodStart: {
             gte: startOfDay,
             lte: endOfDay,

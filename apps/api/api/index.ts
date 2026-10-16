@@ -3,14 +3,22 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { buildApp } from '../src/app';
 
-let fastifyInstance: Awaited<ReturnType<typeof buildApp>> | null = null;
+let fastifyPromise: Promise<Awaited<ReturnType<typeof buildApp>>> | null = null;
 
-async function getFastify() {
-  if (!fastifyInstance) {
-    fastifyInstance = await buildApp();
+function getFastify() {
+  if (!fastifyPromise) {
+    fastifyPromise = buildApp().then(async app => {
+      await app.ready();
+      return app;
+    }).catch(error => {
+      fastifyPromise = null;
+      throw error;
+    });
   }
-  return fastifyInstance;
+  return fastifyPromise;
 }
+
+export const config = { maxDuration: 300 };
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
@@ -19,8 +27,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       method: req.method as any,
       url: req.url ?? '/',
       headers: req.headers as any,
-      // @ts-ignore - body is parsed by Vercel
-      payload: typeof req.body === 'string' ? req.body : JSON.stringify(req.body ?? {}),
+      // Requests without a body must not inject an artificial "{}" payload.
+      payload: req.body == null ? undefined
+        : typeof req.body === 'string' || Buffer.isBuffer(req.body)
+          ? req.body
+          : JSON.stringify(req.body),
       query: req.query as any,
     });
 
@@ -34,7 +45,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!res.headersSent) {
       res.status(500).json({
         error: 'Internal Server Error',
-        message: error?.message ?? 'Unknown error',
+        message: 'Request could not be processed',
       });
     }
   }

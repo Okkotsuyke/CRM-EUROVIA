@@ -196,7 +196,7 @@ export default function AvaliadorDashboardPage() {
 
       try {
         // Overview
-        const overviewRes = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/analytics/overview${params}`, {
+        const overviewRes = await fetch(`/api/eurovia/api/v1/analytics/overview${params}`, {
           headers: { Authorization: `Bearer ${token}` },
         });
         if (overviewRes.status === 401) {
@@ -209,42 +209,42 @@ export default function AvaliadorDashboardPage() {
         if (overviewData.success) setOverview(overviewData.data);
 
         // Stores
-        const storesRes = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/analytics/by-store${params}`, {
+        const storesRes = await fetch(`/api/eurovia/api/v1/analytics/by-store${params}`, {
           headers: { Authorization: `Bearer ${token}` },
         });
         const storesData = await storesRes.json();
         if (storesData.success) setStores(storesData.data);
 
         // VL
-        const vlRes = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/analytics/by-vl${params}`, {
+        const vlRes = await fetch(`/api/eurovia/api/v1/analytics/by-vl${params}`, {
           headers: { Authorization: `Bearer ${token}` },
         });
         const vlData = await vlRes.json();
         if (vlData.success) setVlMetrics(vlData.data);
 
         // Media
-        const mediaRes = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/analytics/by-media${params}`, {
+        const mediaRes = await fetch(`/api/eurovia/api/v1/analytics/by-media${params}`, {
           headers: { Authorization: `Bearer ${token}` },
         });
         const mediaData = await mediaRes.json();
         if (mediaData.success) setMediaMetrics(mediaData.data);
 
         // Productivity
-        const prodRes = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/analytics/productivity`, {
+        const prodRes = await fetch(`/api/eurovia/api/v1/analytics/productivity`, {
           headers: { Authorization: `Bearer ${token}` },
         });
         const prodData = await prodRes.json();
         if (prodData.success) setProductivity(prodData.data);
 
         // Trend
-        const trendRes = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/analytics/trend${params}`, {
+        const trendRes = await fetch(`/api/eurovia/api/v1/analytics/trend${params}`, {
           headers: { Authorization: `Bearer ${token}` },
         });
         const trendData = await trendRes.json();
         if (trendData.success) setTrend(trendData.data);
 
         // Sync Status
-        const syncRes = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/syonet-sync/status`, {
+        const syncRes = await fetch(`/api/eurovia/api/v1/syonet-sync/status`, {
           headers: { Authorization: `Bearer ${token}` },
         });
         const syncData = await syncRes.json();
@@ -267,7 +267,7 @@ export default function AvaliadorDashboardPage() {
   const triggerSync = async () => {
     if (!token) return;
     try {
-      await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/syonet-sync/run`, {
+      await fetch(`/api/eurovia/api/v1/syonet-sync/run`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
       });

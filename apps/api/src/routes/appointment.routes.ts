@@ -5,10 +5,99 @@
  */
 
 import { FastifyInstance } from 'fastify';
+import { Prisma, AppointmentStatus } from '@prisma/client';
+import { z } from 'zod';
 import { authenticate } from '../middleware/auth.middleware';
+import { storeIdFilter } from '../services/store-scope';
 import { attachLeadAssignees } from '../services/lead-assignees';
+import { withNeonOperationalPrincipal, NeonAccessDenied } from '../services/neon-auth-bridge';
+import { neonAppointmentSelect } from '../services/neon-readonly-select';
+
+const stagingEntityId = z.string().min(6).max(128).regex(/^[a-zA-Z0-9_-]+$/);
+const appointmentReadQuery = z.object({
+  storeId: z.string().max(128).optional(),
+  vlUserId: z.string().max(128).optional(),
+  status: z.string().optional(),
+  startDate: z.string().datetime().optional(),
+  endDate: z.string().datetime().optional(),
+  limit: z.string().regex(/^\d+$/).optional(),
+  offset: z.string().regex(/^\d+$/).optional(),
+});
 
 export async function appointmentRoutes(fastify: FastifyInstance) {
+
+  if (process.env.CRM_NEON_STAGING_MODE === 'true') {
+    fastify.get('/', async (request, reply) => {
+      let claims: unknown;
+      try { claims = await request.jwtVerify(); }
+      catch { return reply.status(401).send({ success: false, error: 'Unauthorized' }); }
+      const query = appointmentReadQuery.parse(request.query);
+      const limit = Math.min(Number(query.limit ?? '50'), 100);
+      const offset = Math.min(Number(query.offset ?? '0'), 10000);
+      if (limit < 1) return reply.status(400).send({ success: false, error: 'Invalid limit' });
+      try {
+        return await withNeonOperationalPrincipal(fastify.prisma, claims, async (tx, actor) => {
+          const where: Prisma.AppointmentWhereInput = {
+            storeId: storeIdFilter(actor, query.storeId ? [query.storeId] : undefined),
+            ...(query.vlUserId ? { lead: { assignedVlId: query.vlUserId } } : {}),
+            ...(query.status ? { status: query.status as AppointmentStatus } : {}),
+            ...((query.startDate || query.endDate) ? {
+              appointmentDate: {
+                ...(query.startDate ? { gte: new Date(query.startDate) } : {}),
+                ...(query.endDate ? { lte: new Date(query.endDate) } : {}),
+              },
+            } : {}),
+          };
+          const rows = await tx.appointment.findMany({
+            where, select: neonAppointmentSelect,
+            orderBy: { appointmentDate: 'asc' },
+            take: limit, skip: offset,
+          });
+          const total = await tx.appointment.count({ where });
+          const appointments = await attachLeadAssignees(tx, rows);
+          return {
+            success: true,
+            data: { appointments, total, limit, offset, hasMore: offset + rows.length < total },
+          };
+        });
+      } catch (error) {
+        if (error instanceof NeonAccessDenied) {
+          return reply.status(401).send({ success: false, error: 'Unauthorized' });
+        }
+        throw error;
+      }
+    });
+
+    fastify.get('/:id', async (request, reply) => {
+      let claims: unknown;
+      try { claims = await request.jwtVerify(); }
+      catch { return reply.status(401).send({ success: false, error: 'Unauthorized' }); }
+      const id = stagingEntityId.parse((request.params as { id?: string }).id);
+      try {
+        const found = await withNeonOperationalPrincipal(fastify.prisma, claims, async (tx, actor) => {
+          const row = await tx.appointment.findFirst({
+            where: { id, storeId: storeIdFilter(actor) },
+            select: neonAppointmentSelect,
+          });
+          if (!row) return null;
+          const enriched = await attachLeadAssignees(tx, [row]);
+          return enriched[0] ?? null;
+        });
+        if (!found) return reply.status(404).send({
+          success: false, error: 'Agendamento não encontrado',
+        });
+        return { success: true, data: found };
+      } catch (error) {
+        if (error instanceof NeonAccessDenied) {
+          return reply.status(401).send({ success: false, error: 'Unauthorized' });
+        }
+        throw error;
+      }
+    });
+    // POST, PUT and DELETE are intentionally unavailable in staging.
+    return;
+  }
+
   fastify.addHook('onRequest', authenticate);
 
   /**
@@ -27,9 +116,12 @@ export async function appointmentRoutes(fastify: FastifyInstance) {
         offset?: string;
       };
 
-      const where: any = {};
-
-      if (query.storeId) where.storeId = query.storeId;
+      const where: any = {
+        storeId: storeIdFilter(request.authUser),
+      };
+      if (query.storeId) {
+        where.storeId = storeIdFilter(request.authUser, [query.storeId]);
+      }
       if (query.vlUserId) where.lead = { assignedVlId: query.vlUserId };
       if (query.status) where.status = query.status;
 
@@ -92,8 +184,8 @@ export async function appointmentRoutes(fastify: FastifyInstance) {
     try {
       const { id } = request.params as { id: string };
 
-      const appointment = await fastify.prisma.appointment.findUnique({
-        where: { id },
+      const appointment = await fastify.prisma.appointment.findFirst({
+        where: { id, storeId: storeIdFilter(request.authUser) },
         include: {
           lead: {
             include: {
@@ -149,22 +241,20 @@ export async function appointmentRoutes(fastify: FastifyInstance) {
           });
         }
 
-        // Buscar a loja do lead se não especificada
-        let storeId = body.storeId;
-        if (!storeId) {
-          const lead = await fastify.prisma.lead.findUnique({
-            where: { id: body.leadId },
-            select: { storeId: true },
-          });
-          storeId = lead?.storeId;
-        }
-
-        if (!storeId) {
+        // Fonte da loja e sempre o lead autorizado, nao um parametro arbitrario.
+        const lead = await fastify.prisma.lead.findFirst({
+          where: { id: body.leadId, storeId: storeIdFilter(request.authUser) },
+          select: { storeId: true },
+        });
+        if (!lead) return reply.status(404).send({
+          success: false, error: 'Lead não encontrado',
+        });
+        if (body.storeId && body.storeId !== lead.storeId) {
           return reply.status(400).send({
-            success: false,
-            error: 'Loja não encontrada para o lead',
+            success: false, error: 'Loja do agendamento diferente da loja do lead',
           });
         }
+        const storeId = lead.storeId;
 
         const appointment = await fastify.prisma.appointment.create({
           data: {
@@ -229,6 +319,15 @@ export async function appointmentRoutes(fastify: FastifyInstance) {
           appointmentDate?: string;
         };
 
+        const scope = storeIdFilter(request.authUser);
+        const visible = await fastify.prisma.appointment.findFirst({
+          where: { id, storeId: scope },
+          select: { id: true, leadId: true },
+        });
+        if (!visible) return reply.status(404).send({
+          success: false, error: 'Agendamento não encontrado',
+        });
+
         const updateData: any = {};
 
         if (body.status) {
@@ -277,7 +376,7 @@ export async function appointmentRoutes(fastify: FastifyInstance) {
         if (body.appointmentDate) updateData.appointmentDate = new Date(body.appointmentDate);
 
         const appointment = await fastify.prisma.appointment.update({
-          where: { id },
+          where: { id, ...(scope ? { storeId: scope } : {}) },
           data: updateData,
           include: {
             lead: {
@@ -317,9 +416,17 @@ export async function appointmentRoutes(fastify: FastifyInstance) {
       try {
         const { id } = request.params as { id: string };
 
-        // Atualizar status para cancelado ao invés de deletar
+        // Cancelamento no CRM Eurovia apenas; nunca no Syonet.
+        const scope = storeIdFilter(request.authUser);
+        const visible = await fastify.prisma.appointment.findFirst({
+          where: { id, storeId: scope },
+          select: { id: true },
+        });
+        if (!visible) return reply.status(404).send({
+          success: false, error: 'Agendamento não encontrado',
+        });
         const appointment = await fastify.prisma.appointment.update({
-          where: { id },
+          where: { id, ...(scope ? { storeId: scope } : {}) },
           data: { status: 'CANCELLED' },
         });
 
@@ -373,6 +480,7 @@ export async function appointmentRoutes(fastify: FastifyInstance) {
       const appointments = await fastify.prisma.appointment.findMany({
         where: {
           lead: { assignedVlId: userId },
+          storeId: storeIdFilter(request.authUser),
           appointmentDate: {
             gte: today,
             lt: tomorrow,

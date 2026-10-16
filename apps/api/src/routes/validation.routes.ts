@@ -4,47 +4,31 @@
  * USA SYONET DIRETAMENTE para buscar dados em tempo real
  */
 
-import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
+import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { PrismaClient, ValidationStatus, ValidationItemType } from '@prisma/client';
-import { extractLeadsData, extractProductivityData, syonetLogin, syonetLogout, SyonetRealConfig } from '../services/syonet-real-client';
+import { ValidationStatus, ValidationItemType } from '@prisma/client';
+import { authenticateDashboard } from '../middleware/auth.middleware';
+import { STORE_MAPPING } from '../services/syonet-client';
+import { extractLeadsData, SyonetRealConfig } from '../services/syonet-real-client';
 
-const prisma = new PrismaClient();
-
-// ============================================================
-// ⚠️  ATENÇÃO: Configurações de produção - NUNCA commitar credenciais!
-// ============================================================
-
-// Validação rigorosa de variáveis de ambiente obrigatórias
-const SYONET_URL = process.env.SYONET_URL;
-const SYONET_USERNAME = process.env.SYONET_USERNAME;
-const SYONET_PASSWORD = process.env.SYONET_PASSWORD;
-
-if (!SYONET_URL || !SYONET_USERNAME || !SYONET_PASSWORD) {
-  const missing = [];
-  if (!SYONET_URL) missing.push('SYONET_URL');
-  if (!SYONET_USERNAME) missing.push('SYONET_USERNAME');
-  if (!SYONET_PASSWORD) missing.push('SYONET_PASSWORD');
-
-  console.error(`❌ CRÍTICO: Variáveis de ambiente obrigatórias não definidas: ${missing.join(', ')}`);
-  console.error('   Configure estas variáveis no ambiente de produção antes de iniciar a aplicação.');
-
-  // Em desenvolvimento, lançamos erro. Em produção, o processo nem inicia.
-  if (process.env.NODE_ENV === 'production') {
-    throw new Error(`Falta configuração: ${missing.join(', ')}`);
+/**
+ * Configuracao carregada SOMENTE no momento de uma consulta aprovada.
+ * A API Eurovia inicia sem credenciais Syonet quando a integracao
+ * de leitura estiver desativada ou nao configurada.
+ */
+function getSyonetReadConfig(): SyonetRealConfig {
+  const { SYONET_URL, SYONET_USERNAME, SYONET_PASSWORD } = process.env;
+  if (!SYONET_URL || !SYONET_USERNAME || !SYONET_PASSWORD) {
+    throw new Error('Consulta Syonet indisponivel: integracao nao configurada');
   }
+  return {
+    baseUrl: SYONET_URL,
+    username: SYONET_USERNAME,
+    password: SYONET_PASSWORD,
+    headless: true,
+    timeout: 120000,
+  };
 }
-
-// Configuração do Syonet - SEM FALLBACKS com credenciais reais
-const SYONET_CONFIG: SyonetRealConfig = {
-  baseUrl: SYONET_URL!,
-  username: SYONET_USERNAME!,
-  password: SYONET_PASSWORD!,
-  headless: process.env.SYONET_HEADLESS !== 'false',
-  timeout: 120000,
-};
-
-console.log('🔐 Configuração do Syonet carregada (variáveis de ambiente)');
 
 const ValidationItemSchema = z.object({
   itemType: z.enum(['LEAD', 'SALE', 'APPOINTMENT', 'STORE', 'VL_CONSULTANT', 'MEDIA', 'OVERALL']),
@@ -57,30 +41,39 @@ const ValidationItemSchema = z.object({
 
 type ValidationItemInput = z.infer<typeof ValidationItemSchema>;
 
+declare module 'fastify' {
+  interface FastifyRequest {
+    allowedSyonetStoreIds: Set<string>;
+  }
+}
+
 export async function validationRoutes(fastify: FastifyInstance) {
 
-  /**
-   * Middleware de autenticação para dashboard
-   */
-  async function authenticateDashboard(request: FastifyRequest, reply: FastifyReply) {
-    const token = request.headers.authorization?.replace('Bearer ', '');
-    if (!token) {
-      return reply.status(401).send({ success: false, error: 'Token não fornecido' });
-    }
-
-    try {
-      const decoded = fastify.jwt.verify(token) as any;
-      if (decoded.type !== 'dashboard') {
-        return reply.status(401).send({ success: false, error: 'Token inválido para dashboard' });
-      }
-      request.dashboardUser = decoded;
-    } catch {
-      return reply.status(401).send({ success: false, error: 'Token inválido ou expirado' });
-    }
-  }
-
-  // Adicionar hook de autenticação em todas as rotas
   fastify.addHook('preHandler', authenticateDashboard);
+  fastify.addHook('preHandler', async (request, reply) => {
+    const permittedStoreIds = request.dashboardUser.allowedStores;
+    if (!permittedStoreIds?.length) {
+      return reply.status(403).send({
+        success: false, error: 'Avaliador sem lojas autorizadas',
+      });
+    }
+    // O JWT nao decide o escopo. Mapeamos a lista atual da base Eurovia
+    // para IDs externos Syonet, sem realizar operacao de escrita.
+    const stores = await fastify.prisma.store.findMany({
+      where: { id: { in: permittedStoreIds }, active: true },
+      select: { syonetName: true },
+    });
+    const names = new Set(stores.map(store => store.syonetName.trim().toUpperCase()));
+    const externalIds = Object.values(STORE_MAPPING)
+      .filter(meta => meta.syonetId !== undefined && names.has(meta.syonetName.trim().toUpperCase()))
+      .map(meta => 'syonet_' + meta.syonetId);
+    request.allowedSyonetStoreIds = new Set(externalIds);
+    if (!request.allowedSyonetStoreIds.size) {
+      return reply.status(403).send({
+        success: false, error: 'Loja do avaliador sem mapeamento autorizado',
+      });
+    }
+  });
 
   /**
    * GET /api/v1/dashboard/validation/leads
@@ -103,13 +96,14 @@ export async function validationRoutes(fastify: FastifyInstance) {
       }
 
       // Buscar leads direto do Syonet
-      const leads = await extractLeadsData(SYONET_CONFIG, dateRange);
+      const leads = (await extractLeadsData(getSyonetReadConfig(), dateRange))
+        .filter(lead => request.allowedSyonetStoreIds.has(lead.storeId));
 
       console.log(`✅ Syonet: ${leads.length} leads encontrados`);
 
       // Buscar validações existentes do nosso banco
       const leadIds = leads.map(l => l.id);
-      const validations = await prisma.validationReport.findMany({
+      const validations = await fastify.prisma.validationReport.findMany({
         where: {
           dashboardUserId: request.dashboardUser.id,
           itemType: 'LEAD',
@@ -162,7 +156,7 @@ export async function validationRoutes(fastify: FastifyInstance) {
         periodFilter.createdAt = { ...periodFilter.createdAt, lte: new Date(endDate + 'T23:59:59Z') };
       }
 
-      const validations = await prisma.validationReport.findMany({
+      const validations = await fastify.prisma.validationReport.findMany({
         where: {
           dashboardUserId: userId,
           ...(Object.keys(periodFilter).length > 0 ? periodFilter : {}),
@@ -183,7 +177,8 @@ export async function validationRoutes(fastify: FastifyInstance) {
 
       let syonetData = { leadsCount: 0, salesCount: 0 };
       try {
-        const leads = await extractLeadsData(SYONET_CONFIG, dateRange);
+        const leads = (await extractLeadsData(getSyonetReadConfig(), dateRange))
+        .filter(lead => request.allowedSyonetStoreIds.has(lead.storeId));
         syonetData.leadsCount = leads.length;
         console.log(`✅ Syonet: ${leads.length} leads no período`);
       } catch (err) {
@@ -239,7 +234,8 @@ export async function validationRoutes(fastify: FastifyInstance) {
       }
 
       // Buscar dados do Syonet
-      const leads = await extractLeadsData(SYONET_CONFIG, dateRange);
+      const leads = (await extractLeadsData(getSyonetReadConfig(), dateRange))
+        .filter(lead => request.allowedSyonetStoreIds.has(lead.storeId));
 
       // Agregar por loja
       const storeMetrics: Record<string, { leads: number; sales: number; conversionRate: number }> = {};
@@ -315,7 +311,8 @@ export async function validationRoutes(fastify: FastifyInstance) {
         dateRange = { start, end };
       }
 
-      const leads = await extractLeadsData(SYONET_CONFIG, dateRange);
+      const leads = (await extractLeadsData(getSyonetReadConfig(), dateRange))
+        .filter(lead => request.allowedSyonetStoreIds.has(lead.storeId));
 
       // Filtrar apenas leads com vendas (status FECHADO ou VENDIDO)
       const sales = leads.filter(l =>
@@ -325,7 +322,7 @@ export async function validationRoutes(fastify: FastifyInstance) {
 
       // Buscar validações existentes
       const saleIds = sales.map(s => s.id);
-      const validations = await prisma.validationReport.findMany({
+      const validations = await fastify.prisma.validationReport.findMany({
         where: {
           dashboardUserId: request.dashboardUser.id,
           itemType: 'SALE',
@@ -375,6 +372,21 @@ export async function validationRoutes(fastify: FastifyInstance) {
     }
 
     const { id: userId } = request.dashboardUser;
+    // Validacao granular deve conhecer a loja do registro externo.
+    // Ate existir vinculo confiavel para cada entidade, falhar fechado.
+    if (body.itemType === 'STORE') {
+      if (!body.itemId ||
+          (!request.dashboardUser.allowedStores.includes(body.itemId) &&
+           !request.allowedSyonetStoreIds.has(body.itemId))) {
+        return reply.status(403).send({
+          success: false, error: 'Loja nao autorizada para validacao',
+        });
+      }
+    } else if (body.itemType !== 'OVERALL') {
+      return reply.status(503).send({
+        success: false, error: 'Validacao granular indisponivel ate homologacao do vinculo de loja',
+      });
+    }
 
     // Validar feedback quando INCORRETO
     if (body.status === 'INCORRETO' && (!body.feedback || body.feedback.length < 3)) {
@@ -385,7 +397,7 @@ export async function validationRoutes(fastify: FastifyInstance) {
     }
 
     // Verificar se já existe validação para este item
-    const existing = await prisma.validationReport.findFirst({
+    const existing = await fastify.prisma.validationReport.findFirst({
       where: {
         itemType: body.itemType as ValidationItemType,
         itemId: body.itemId || null,
@@ -397,7 +409,7 @@ export async function validationRoutes(fastify: FastifyInstance) {
 
     if (existing) {
       // Atualizar validação existente
-      const updated = await prisma.validationReport.update({
+      const updated = await fastify.prisma.validationReport.update({
         where: { id: existing.id },
         data: {
           status: body.status as ValidationStatus,
@@ -413,7 +425,7 @@ export async function validationRoutes(fastify: FastifyInstance) {
     }
 
     // Criar nova validação
-    const validation = await prisma.validationReport.create({
+    const validation = await fastify.prisma.validationReport.create({
       data: {
         itemType: body.itemType as ValidationItemType,
         itemId: body.itemId || null,
@@ -440,7 +452,7 @@ export async function validationRoutes(fastify: FastifyInstance) {
     const { id } = request.params;
     const { id: userId } = request.dashboardUser;
 
-    const validation = await prisma.validationReport.findUnique({
+    const validation = await fastify.prisma.validationReport.findUnique({
       where: { id },
     });
 
@@ -452,7 +464,7 @@ export async function validationRoutes(fastify: FastifyInstance) {
       return reply.status(403).send({ success: false, error: 'Sem permissão para excluir esta validação' });
     }
 
-    await prisma.validationReport.delete({ where: { id } });
+    await fastify.prisma.validationReport.delete({ where: { id } });
 
     return {
       success: true,

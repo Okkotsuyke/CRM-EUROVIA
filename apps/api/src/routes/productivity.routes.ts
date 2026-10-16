@@ -43,13 +43,14 @@ export const productivityRoutes: FastifyPluginAsync = async (fastify) => {
 
     const filters = {
       consultantId: q.consultantId,
+      storeId: q.storeId,
       status: q.status?.split(',').map(s => s.trim() as any),
       priority: q.priority === 'true',
     };
 
     const [summary, leads] = await Promise.all([
-      productivityService.getPortfolioSummary(fastify.prisma, userId, filters),
-      productivityService.getPortfolioLeads(fastify.prisma, userId, filters),
+      productivityService.getPortfolioSummary(fastify.prisma, userId, filters, request.authUser),
+      productivityService.getPortfolioLeads(fastify.prisma, userId, filters, request.authUser),
     ]);
 
     return { summary, leads };
@@ -60,8 +61,9 @@ export const productivityRoutes: FastifyPluginAsync = async (fastify) => {
     const q = ProductivityFiltersSchema.parse(request.query);
     const filters = {
       consultantId: q.consultantId,
+      storeId: q.storeId,
       date: q.date,
     };
-    return productivityService.getTodayAgenda(fastify.prisma, request.authUser.id, filters);
+    return productivityService.getTodayAgenda(fastify.prisma, request.authUser.id, filters, request.authUser);
   });
 };

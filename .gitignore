@@ -61,3 +61,9 @@ apps/api/supabase/
 
 .vercel
 .env*
+
+# Sessões/cookies locais do Syonet — nunca versionar
+**/cookies.txt
+**/syonet_cookies*.json
+**/syonet_session*.json
+**/storage-state*.json

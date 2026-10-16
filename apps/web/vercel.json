@@ -1,8 +1,15 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "buildCommand": "cd ../.. && pnpm turbo build --filter=@crm/web",
-  "installCommand": "cd ../.. && pnpm install",
+  "installCommand": "cd ../.. && pnpm install --filter=@crm/web... --filter=. --frozen-lockfile",
   "framework": "nextjs",
   "outputDirectory": ".next",
-  "regions": ["gru1"]
+  "regions": [
+    "gru1"
+  ],
+  "git": {
+    "deploymentEnabled": {
+      "fix/eurovia-hardening-deploy-20261015": false
+    }
+  }
 }

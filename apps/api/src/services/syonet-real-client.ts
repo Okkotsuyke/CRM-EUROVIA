@@ -28,7 +28,8 @@
  * - 244: Funil de Vendas
  */
 
-import { chromium, Browser, Page, BrowserContext } from 'playwright';
+import { chromium as playwrightChromium, Browser, Page, BrowserContext } from 'playwright-core';
+import { assertSyonetReadOnlyRequest, installSyonetReadOnlyGuard } from './syonet-readonly-guard';
 import {
   normalizeMedia,
   normalizeLeadStatus,
@@ -74,22 +75,43 @@ let lastLoginTime: number = 0;
 // Configurações de cache
 const SESSION_CACHE_MINUTES = 25; // Cache sessão por 25 minutos
 
+// Escopo produtivo do dashboard aprovado: 7 lojas das praças Fortaleza/Salvador.
+// A conta do Syonet pode enxergar outras empresas, mas elas não entram no CRM
+// até serem explicitamente adicionadas ao escopo de negócio.
+const CRM_PRODUCTION_SYONET_STORE_IDS = new Set([75, 102, 12, 23, 86, 77, 92]);
+
 /**
  * Obtém ou cria uma instância do navegador
  */
 async function getBrowser(config: SyonetRealConfig): Promise<Browser> {
   if (!browserInstance || !browserInstance.isConnected()) {
     console.log('🔧 Syonet: Iniciando navegador...');
-    browserInstance = await chromium.launch({
-      headless: config.headless ?? true,
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-gpu',
-      ],
-    });
-    console.log('✅ Syonet: Navegador iniciado');
+    const isVercel = process.env.VERCEL === '1' || Boolean(process.env.VERCEL_ENV);
+    if (isVercel) {
+      // @sparticuz/chromium is ESM-only; keep the production API CommonJS build
+      // and load the module through Node's native dynamic import.
+      const serverlessChromium = await new Function(
+        'return import("@sparticuz/chromium")',
+      )();
+      serverlessChromium.default.setGraphicsMode = false;
+      browserInstance = await playwrightChromium.launch({
+        headless: true,
+        args: [...serverlessChromium.default.args, '--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
+        executablePath: await serverlessChromium.default.executablePath(),
+      });
+    } else {
+      const executablePath = process.env.SYONET_CHROMIUM_EXECUTABLE_PATH;
+      if (!executablePath) {
+        throw new Error('Syonet: defina SYONET_CHROMIUM_EXECUTABLE_PATH no ambiente local');
+      }
+      browserInstance = await playwrightChromium.launch({
+        headless: config.headless ?? true,
+        executablePath,
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
+      });
+    }
+
+    console.log('✅ Syonet: Navegador iniciado em modo ' + (isVercel ? 'serverless' : 'local'));
   }
   return browserInstance;
 }
@@ -97,12 +119,13 @@ async function getBrowser(config: SyonetRealConfig): Promise<Browser> {
 /**
  * Obtém ou cria um contexto do navegador
  */
-async function getContext(browser: Browser): Promise<BrowserContext> {
+async function getContext(browser: Browser, baseUrl: string): Promise<BrowserContext> {
   if (!contextInstance || contextInstance.pages().length === 0) {
     contextInstance = await browser.newContext({
       viewport: { width: 1920, height: 1080 },
-      ignoreHTTPSErrors: true,
+      serviceWorkers: 'block',
     });
+    await installSyonetReadOnlyGuard(contextInstance, baseUrl);
   }
   return contextInstance;
 }
@@ -110,9 +133,9 @@ async function getContext(browser: Browser): Promise<BrowserContext> {
 /**
  * Obtém ou cria uma página
  */
-async function getPage(browser: Browser): Promise<Page> {
+async function getPage(browser: Browser, baseUrl: string): Promise<Page> {
   if (!pageInstance || pageInstance.isClosed()) {
-    const context = await getContext(browser);
+    const context = await getContext(browser, baseUrl);
     pageInstance = await context.newPage();
     pageInstance.setDefaultTimeout(DEFAULT_TIMEOUT);
     pageInstance.setDefaultNavigationTimeout(DEFAULT_TIMEOUT);
@@ -148,7 +171,8 @@ async function getSessionCookies(): Promise<string> {
  */
 async function apiRequest(page: Page, endpoint: string, options: RequestInit = {}): Promise<any> {
   const cookies = await getSessionCookies();
-  const url = `${page.url().split('/portal')[0]}${endpoint}`;
+  const url = new URL(endpoint, process.env.SYONET_URL || 'https://viasul.syonet.com').href;
+  assertSyonetReadOnlyRequest(url, options.method || 'GET', process.env.SYONET_URL || 'https://viasul.syonet.com');
 
   const response = await page.evaluate(async (args: { url: string; cookie: string; options: RequestInit }) => {
     const res = await fetch(args.url, {
@@ -221,11 +245,11 @@ export async function syonetLogin(config: SyonetRealConfig): Promise<boolean> {
     }
 
     const browser = await getBrowser(config);
-    const page = await getPage(browser);
+    const page = await getPage(browser, config.baseUrl);
 
     // Ir para página de login
     console.log('📍 Navegando para página de login...');
-    await page.goto(`${config.baseUrl}/portal/app.do?modulo=login`, {
+    await page.goto(`${config.baseUrl}/portal/app.do?modulo=login#/login`, {
       waitUntil: 'domcontentloaded',
       timeout: LOGIN_TIMEOUT,
     });
@@ -328,18 +352,10 @@ export async function extractFunilData(config: SyonetRealConfig, filters?: {
   try {
     console.log('📊 Syonet: Extraindo métricas do Funil via API...');
 
-    // IDs das empresas de interesse (FIAT/VIASUL e BYD)
-    const targetEmpresaIds = filters?.empresaIds || [
-      71,   // VIASUL PIEDADE - PE (FIAT)
-      72,   // VIASUL ARRUDA - PE (FIAT)
-      75,   // VIASUL DUNAS - CE (FIAT)
-      91,   // BYD ARRUDA - PE (BYD)
-      92,   // BYD CAMINHO DAS ARVORES - BA (BYD)
-      102,  // BYD WASHINGTON SOARES - CE (BYD)
-    ];
-
-    // Primeiro, obter lista de empresas para mapear IDs para nomes
-    const empresasMap = new Map<number, { nome: string; apelido: string }>();
+    // A lista de empresas deve vir do proprio Syonet. O fallback fixo anterior
+    // podia omitir lojas novas ou consultar lojas fora do escopo da conta.
+    const empresasMap = new Map<number, { nome: string; apelido: string; ativo: boolean }>();
+    let empresasAtivas: number[] = [];
 
     try {
       const empresasResponse = await apiRequest(page, '/api/empresa');
@@ -349,16 +365,37 @@ export async function extractFunilData(config: SyonetRealConfig, filters?: {
           : empresasResponse.data.content || [];
 
         for (const emp of empresasList) {
-          empresasMap.set(emp.idEmpresa, {
-            nome: emp.nome || emp.apelido || `Empresa ${emp.idEmpresa}`,
-            apelido: emp.apelido || emp.nome || `Emp ${emp.idEmpresa}`,
+          const id = Number(emp.idEmpresa ?? emp.id);
+          if (!Number.isInteger(id)) continue;
+          empresasMap.set(id, {
+            nome: emp.nome || emp.apelido || `Empresa ${id}`,
+            apelido: emp.apelido || emp.nome || `Emp ${id}`,
+            ativo: emp.ativo !== false,
           });
         }
-        console.log(`✅ Mapeadas ${empresasMap.size} empresas`);
+
+        const mappedIds = new Set(Object.values(STORE_MAPPING)
+          .map(v => v.syonetId)
+          .filter((id): id is number => Number.isInteger(id)));
+
+        empresasAtivas = [...empresasMap.entries()]
+          .filter(([id, emp]) => emp.ativo && mappedIds.has(id) && CRM_PRODUCTION_SYONET_STORE_IDS.has(id))
+          .map(([id]) => id)
+          .sort((a, b) => a - b);
+
+        console.log(`✅ Mapeadas ${empresasMap.size} empresas; ${empresasAtivas.length} lojas Eurovia no escopo`);
       }
     } catch (err) {
       console.warn('⚠️ Erro ao obter lista de empresas:', err);
     }
+
+    const targetEmpresaIds = filters?.empresaIds
+      ?? (empresasAtivas.length > 0
+        ? empresasAtivas
+        : Object.values(STORE_MAPPING)
+            .map(v => v.syonetId)
+            .filter((id): id is number => Number.isInteger(id))
+            .filter(id => CRM_PRODUCTION_SYONET_STORE_IDS.has(id)));
 
     // Para cada empresa de interesse, extrair métricas do dashboard 189
     for (const empresaId of targetEmpresaIds) {
@@ -366,7 +403,10 @@ export async function extractFunilData(config: SyonetRealConfig, filters?: {
         console.log(`📍 Processando empresa ID ${empresaId}...`);
 
         // Chamar o dashboard 189 (Incluidos / Agendados / Comparecidos / Vendas)
-        const dashboardUrl = `/api/dashboard/189?empresa=${empresaId}`;
+        const dashboardParams = new URLSearchParams({ empresa: String(empresaId) });
+        if (filters?.dataInicio) dashboardParams.set('dataInicio', filters.dataInicio);
+        if (filters?.dataFim) dashboardParams.set('dataFim', filters.dataFim);
+        const dashboardUrl = `/api/dashboard/189?${dashboardParams.toString()}`;
         const dashboardResponse = await apiRequest(page, dashboardUrl);
 
         if (dashboardResponse.status !== 200) {
@@ -468,7 +508,10 @@ export async function extractFunilData(config: SyonetRealConfig, filters?: {
         // Se não conseguimos dados do dashboard, tentar endpoint de funil direto
         if (metric.leadsTotal === 0 && metric.appointmentsTotal === 0) {
           try {
-            const funilResponse = await apiRequest(page, `/api/funil?empresa=${empresaId}`);
+            const funilParams = new URLSearchParams({ empresa: String(empresaId) });
+            if (filters?.dataInicio) funilParams.set('dataInicio', filters.dataInicio);
+            if (filters?.dataFim) funilParams.set('dataFim', filters.dataFim);
+            const funilResponse = await apiRequest(page, `/api/funil?${funilParams.toString()}`);
             if (funilResponse.status === 200 && funilResponse.data) {
               const funilData = funilResponse.data;
 
@@ -818,47 +861,85 @@ export async function extractLeadsData(
   try {
     console.log('📊 Syonet: Extraindo leads via API...');
 
-    // Primeiro, obter lista de empresas
+
+    // Primeiro, obter a lista real de empresas. Nenhum cadastro e alterado.
     let empresaIds: number[] = [];
+    const empresaNames = new Map<number, string>();
     try {
       const empresasResponse = await apiRequest(page, '/api/empresa');
       if (empresasResponse.status === 200 && empresasResponse.data) {
-        const empresas: any[] = Array.isArray(empresasResponse.data) ? empresasResponse.data : [];
-        empresaIds = empresas
-          .filter((e) => e.ativo)
-          .map((e) => e.idEmpresa)
-          .filter((id): id is number => id !== undefined);
-        console.log(`   Empresas ativas: ${empresaIds.length}`);
+        const empresas: any[] = Array.isArray(empresasResponse.data)
+          ? empresasResponse.data
+          : empresasResponse.data.content || [];
+
+        const mappedIds = new Set(Object.values(STORE_MAPPING)
+          .map(v => v.syonetId)
+          .filter((id): id is number => Number.isInteger(id)));
+
+        for (const empresa of empresas) {
+          const id = Number(empresa.idEmpresa ?? empresa.id);
+          if (!Number.isInteger(id) || empresa.ativo === false || !mappedIds.has(id) || !CRM_PRODUCTION_SYONET_STORE_IDS.has(id)) continue;
+          empresaIds.push(id);
+          empresaNames.set(id, empresa.nome || empresa.apelido || ('Empresa ' + id));
+        }
+        empresaIds.sort((a, b) => a - b);
+        console.log('   Empresas Eurovia ativas no Syonet: ' + empresaIds.length);
       }
     } catch (err) {
-      console.warn('⚠️ Erro ao obter empresas:', err);
+      console.warn('Erro ao obter empresas:', err);
     }
 
-    // Se não temos empresas, usar mapeamento fixo
     if (empresaIds.length === 0) {
-      empresaIds = Object.values(STORE_MAPPING).map((v) => v.syonetId).filter((id): id is number => id !== undefined);
-      console.log(`   Usando mapeamento fixo: ${empresaIds.length} empresas`);
+      empresaIds = Object.values(STORE_MAPPING)
+        .map(v => v.syonetId)
+        .filter((id): id is number => Number.isInteger(id))
+        .filter(id => CRM_PRODUCTION_SYONET_STORE_IDS.has(id));
+      for (const mapping of Object.values(STORE_MAPPING)) {
+        if (mapping.syonetId && !empresaNames.has(mapping.syonetId)) {
+          empresaNames.set(mapping.syonetId, mapping.syonetName);
+        }
+      }
     }
 
-    // Buscar eventos de cada empresa
+    const storeNameBySyonetId = new Map<number, string>(
+      Object.entries(STORE_MAPPING)
+        .filter(([, mapping]) => Number.isInteger(mapping.syonetId))
+        .map(([storeName, mapping]) => [mapping.syonetId as number, storeName])
+    );
+
+    // Buscar eventos de cada empresa com paginacao completa. Todas as chamadas
+    // passam pelo guard imutavel e sao exclusivamente GET.
+    const PAGE_SIZE = 200;
+    const MAX_PAGES_PER_STORE = 100;
+
     for (const empresaId of empresaIds) {
       try {
-        // CORRIGIDO: Usar endpoint correto /api/evento?idEmpresa={id}
-        const response = await apiRequest(page, `/api/evento?idEmpresa=${empresaId}&page=0&size=200`);
+        for (let pageNumber = 0; pageNumber < MAX_PAGES_PER_STORE; pageNumber++) {
+          const response = await apiRequest(
+            page,
+            '/api/evento?idEmpresa=' + empresaId + '&page=' + pageNumber + '&size=' + PAGE_SIZE
+          );
 
-        if (response.status === 200 && response.data) {
-          const items: any[] = Array.isArray(response.data) ? response.data : [];
+          if (response.status !== 200 || !response.data) break;
 
-          if (items.length === 0) continue;
+          const items: any[] = Array.isArray(response.data)
+            ? response.data
+            : response.data.content || response.data.items || [];
 
-          console.log(`   Empresa ${empresaId}: ${items.length} eventos`);
+          if (items.length === 0) break;
+
+          console.log('   Empresa ' + empresaId + ', pagina ' + pageNumber + ': ' + items.length + ' eventos');
 
           for (const item of items) {
-            // Mapear campos do Syonet para LeadData
+            const resolvedStoreName =
+              storeNameBySyonetId.get(Number(item.idEmpresa ?? empresaId)) ||
+              empresaNames.get(empresaId) ||
+              ('Empresa ' + empresaId);
+
             const lead: LeadData = {
-              id: item.idEvento?.toString() || item.id?.toString() || `lead_${Date.now()}`,
+              id: item.idEvento?.toString() || item.id?.toString() || '',
               storeId: item.idEmpresa?.toString() || empresaId.toString(),
-              storeName: '',
+              storeName: resolvedStoreName,
               mediaRaw: item.midia?.dsMidia || item.midia?.label || item.midia || item.dsMidia || 'DESCONHECIDO',
               eventType: item.idTipoEvento || item.tipoEvento || item.grupoEvento || 'OPORTUNIDADE',
               receivedAt: new Date(item.dataInc || item.dtInc || Date.now()),
@@ -871,17 +952,17 @@ export async function extractLeadsData(
               assignedVsName: item.veiculo?.vendedor || '',
               assignedBdcId: undefined,
               department: item.idGrupoEvento || 'OPORTUNIDADE',
-              tipoVenda: item.veiculo?.marca ? `Seminovos ${item.veiculo.marca}` : 'Venda Seminovos',
+              tipoVenda: item.veiculo?.marca ? 'Seminovos ' + item.veiculo.marca : 'Venda Seminovos',
               vehicleModel: item.veiculo?.modelo,
               vehicleYear: item.veiculo?.anoFabricacao,
               vehicleBrand: item.veiculo?.marca,
             };
 
-            // Normalizar mídia
+            if (!lead.id) continue;
+
             const mediaNormalized = normalizeMedia(lead.mediaRaw);
             lead.mediaRaw = mediaNormalized.normalized;
 
-            // Filtrar por data se especificado
             if (dateRange) {
               const leadDate = lead.receivedAt.getTime();
               if (leadDate < dateRange.start.getTime() || leadDate > dateRange.end.getTime()) {
@@ -891,12 +972,13 @@ export async function extractLeadsData(
 
             leads.push(lead);
           }
+
+          if (items.length < PAGE_SIZE) break;
         }
       } catch (err) {
-        console.warn(`⚠️ Erro ao buscar eventos da empresa ${empresaId}:`, err);
+        console.warn('Erro ao buscar eventos da empresa ' + empresaId + ':', err);
       }
     }
-
     console.log(`✅ Total de leads extraídos: ${leads.length}`);
   } catch (error) {
     console.error('❌ Syonet: Erro ao extrair leads:', error);
