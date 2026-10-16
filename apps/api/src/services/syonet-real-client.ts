@@ -688,6 +688,9 @@ export async function syonetLogin(config: SyonetRealConfig): Promise<boolean> {
           console.warn('⚠️ Falha ao inspecionar bundles JS do Syonet');
         }
       }
+      if (process.env.SYONET_DISCOVER_SCREENS === 'true') {
+        await discoverSyonetScreens(config, page);
+      }
       console.log('✅ Syonet: Login realizado com sucesso');
       return true;
     } else {
@@ -1019,7 +1022,6 @@ export async function extractFunilData(config: SyonetRealConfig, filters?: {
       }
     }
 
-    await discoverSyonetScreens(config, page);
     console.log('📊 Syonet: Extraindo métricas do Funil via API...');
 
     // A lista de empresas deve vir do proprio Syonet. O fallback fixo anterior
