@@ -458,7 +458,21 @@ export async function syonetLogin(config: SyonetRealConfig): Promise<boolean> {
     }
 
     const browser = await getBrowser(config);
-    const page = await getPage(browser, config.baseUrl);
+    const page = await getPage(browser, config);
+
+    const observedApiCalls = new Map<string, Set<number>>();
+    const recordApiCall = (url: string, status?: number) => {
+      try {
+        const parsed = new URL(url);
+        if (!parsed.pathname.startsWith('/api/')) return;
+        const key = parsed.pathname;
+        const statuses = observedApiCalls.get(key) || new Set<number>();
+        if (status !== undefined) statuses.add(status);
+        observedApiCalls.set(key, statuses);
+      } catch {}
+    };
+    page.on('request', (req) => recordApiCall(req.url()));
+    page.on('response', (res) => recordApiCall(res.url(), res.status()));
 
     // Ir para página de login
     console.log('📍 Navegando para página de login...');
@@ -513,6 +527,9 @@ export async function syonetLogin(config: SyonetRealConfig): Promise<boolean> {
 
     const currentUrl = page.url();
     console.log(`📍 URL atual: ${currentUrl}`);
+    console.log('🔎 Syonet API calls observadas durante login/dashboard: ' + JSON.stringify(
+      [...observedApiCalls.entries()].map(([path, statuses]) => ({ path, statuses: [...statuses] })).slice(0, 300)
+    ));
 
     // Verificar se login foi bem-sucedido
     const loginSuccess = !currentUrl.includes('login');
