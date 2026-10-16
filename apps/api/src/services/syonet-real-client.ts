@@ -519,24 +519,54 @@ export async function syonetLogin(config: SyonetRealConfig): Promise<boolean> {
             })
             .slice(0, 100);
           const routes = new Set<string>();
+          const scriptMeta: Array<Record<string, unknown>> = [];
+          const keywordContexts: Array<Record<string, unknown>> = [];
           for (const src of scripts) {
             try {
               const res = await fetch(src, { method: 'GET', credentials: 'include' });
-              if (!res.ok) continue;
-              const source = (await res.text()).slice(0, 3_000_000);
-              const matches = source.match(/\/api\/[A-Za-z0-9_./:?=&%,-]{2,180}/g) || [];
-              for (const match of matches) {
-                try { routes.add(new URL(match, origin).pathname); } catch { routes.add(match.split('?')[0]); }
+              if (!res.ok) {
+                scriptMeta.push({ src: new URL(src).pathname, status: res.status });
+                continue;
               }
-            } catch {}
+              const source = (await res.text()).slice(0, 6_000_000);
+              const apiMatches = source.match(/(?:\\/)?api\\/[^"'\\s]+/g) || [];
+              for (const match of apiMatches) {
+                const clean = match.replace(/^\\//, '').split('?')[0];
+                if (clean.length < 3) routes.add('/' + clean);
+              }
+              scriptMeta.push({
+                src: new URL(src).pathname,
+                status: res.status,
+                length: source.length,
+                apiLiteralCount: apiMatches.length,
+                hasDashboard: /dashboard/i.test(source),
+                hasDataset: /dataset/i.test(source),
+                hasWidget: /widget/i.test(source),
+              });
+              for (const keyword of ['idDataset', 'dataset', 'dashboard', 'executeQuery', 'queryDataset', 'http.post', 'fetch(']) {
+                const i = source.toLowerCase().indexOf(keyword.toLowerCase());
+                if (i >= 0 && keywordContexts.length < 20) {
+                  keywordContexts.push({
+                    keyword,
+                    snippet: source.slice(Math.max(0, i - 120), Math.min(source.length, i + 320))
+                      .replace(/\s+/g, ' ')
+                      .slice(0, 500),
+                  });
+                }
+              }
+            } catch (err) {
+              scriptMeta.push({ src: 'unreadable', error: 'read-failed' });
+            }
           }
           return {
             url: location.href,
             scripts: scripts.map((src: string) => { try { return new URL(src).pathname; } catch { return '<invalid>'; } }),
             apiResources,
+            scriptMeta,
             bundleRoutes: [...routes].filter((route: string) =>
               /dashboard|dataset|widget|funil|produtividade|evento|query|execute|relatorio/i.test(route)
             ).slice(0, 120),
+            keywordContexts,
           };
         });
         console.log('🔎 Syonet portal resources: ' + JSON.stringify(bundleInfo));
