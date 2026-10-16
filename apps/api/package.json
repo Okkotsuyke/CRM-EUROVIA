@@ -2,12 +2,12 @@
   "name": "@crm/api",
   "version": "1.0.0",
   "private": true,
-  "type": "module",
+  "type": "commonjs",
   "packageManager": "pnpm@9.0.0",
   "scripts": {
     "dev": "npx tsx watch src/server.ts",
     "build": "prisma generate && tsc",
-    "start": "node dist/server.js",
+    "start": "node dist/src/server.js",
     "vercel:build": "prisma generate && tsc",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -17,10 +17,10 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:seed": "tsx prisma/seed.ts",
     "prisma:studio": "prisma studio",
-    "postinstall": "prisma generate"
+    "postinstall": "prisma generate",
+    "prisma:seed:production": "tsx prisma/seed.production.ts"
   },
   "dependencies": {
-    "@crm/shared": "workspace:*",
     "@fastify/cors": "^9.0.1",
     "@fastify/jwt": "^8.0.1",
     "@fastify/multipart": "^8.3.0",
@@ -33,8 +33,9 @@
     "fastify-plugin": "^4.5.1",
     "pino": "^9.4.0",
     "pino-pretty": "^11.2.2",
-    "playwright": "^1.64.0",
-    "zod": "^3.24.0"
+    "zod": "^3.24.0",
+    "@sparticuz/chromium": "153.0.0",
+    "playwright-core": "1.63.0"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",

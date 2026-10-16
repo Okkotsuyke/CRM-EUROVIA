@@ -10,7 +10,8 @@
  * - Home:  https://viasul.syonet.com/portal/acessaSistema.do#/cic.do
  */
 
-import { chromium, Browser, Page, BrowserContext } from 'playwright';
+import { chromium, Browser, Page, BrowserContext } from 'playwright-core';
+import { installSyonetReadOnlyGuard } from './syonet-readonly-guard';
 import {
   normalizeMedia,
   normalizeLeadStatus,
@@ -79,10 +80,6 @@ async function getBrowser(config: SyonetRealConfig): Promise<Browser> {
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
         '--disable-gpu',
-        '--disable-web-security',
-        '--disable-features=IsolateOrigins,site-per-process',
-        '--allow-running-insecure-content',
-        '--ignore-certificate-errors',
         '--disable-blink-features=AutomationControlled',
       ],
     });
@@ -95,13 +92,14 @@ async function getBrowser(config: SyonetRealConfig): Promise<Browser> {
 /**
  * Cria contexto do navegador
  */
-async function getContext(browser: Browser): Promise<BrowserContext> {
+async function getContext(browser: Browser, baseUrl: string): Promise<BrowserContext> {
   if (!contextInstance) {
     contextInstance = await browser.newContext({
       viewport: { width: 1366, height: 768 },
-      ignoreHTTPSErrors: true,
+      serviceWorkers: 'block',
       userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     });
+    await installSyonetReadOnlyGuard(contextInstance, baseUrl);
   }
   return contextInstance;
 }
@@ -109,9 +107,9 @@ async function getContext(browser: Browser): Promise<BrowserContext> {
 /**
  * Obtém página
  */
-async function getPage(browser: Browser): Promise<Page> {
+async function getPage(browser: Browser, baseUrl: string): Promise<Page> {
   if (!pageInstance || pageInstance.isClosed()) {
-    const context = await getContext(browser);
+    const context = await getContext(browser, baseUrl);
     pageInstance = await context.newPage();
     pageInstance.setDefaultTimeout(DEFAULT_TIMEOUT);
     pageInstance.setDefaultNavigationTimeout(DEFAULT_TIMEOUT);
@@ -176,7 +174,7 @@ export async function syonetLogin(config: SyonetRealConfig): Promise<boolean> {
     }
 
     browser = await getBrowser(config);
-    const page = await getPage(browser);
+    const page = await getPage(browser, config.baseUrl);
 
     // 1. IR PARA PÁGINA DE LOGIN
     log('info', 'Navegando para página de login...');

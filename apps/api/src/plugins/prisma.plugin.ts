@@ -4,6 +4,7 @@
 import fp from 'fastify-plugin';
 import { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import { PrismaClient } from '@prisma/client';
+import { validateNeonStagingEnv } from '../services/neon-staging';
 
 declare module 'fastify' {
   interface FastifyInstance {
@@ -18,12 +19,14 @@ async function prismaPluginInner(fastify: FastifyInstance) {
     return;
   }
 
-  // Configurar URL do banco - usar E3_POSTGRES_URL se DATABASE_URL não estiver disponível
-  const databaseUrl = process.env.DATABASE_URL || process.env.E3_POSTGRES_URL;
-
+  // Never fall back to another project's database. In staging, the
+  // project, branch, SQL role and region must be checked before connect.
+  const databaseUrl = process.env.DATABASE_URL;
   if (!databaseUrl) {
-    throw new Error('DATABASE_URL or E3_POSTGRES_URL environment variable is required');
+    throw new Error('DATABASE_URL da API CRM EUROVIA nao configurada');
   }
+
+  validateNeonStagingEnv(process.env);
 
   const prisma = new PrismaClient({
     log: process.env.NODE_ENV !== 'production' ? ['error', 'warn'] : ['error'],

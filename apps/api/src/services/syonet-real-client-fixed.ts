@@ -15,7 +15,8 @@
  * - GET /api/funil - Funil
  */
 
-import { chromium, Browser, Page, BrowserContext } from 'playwright';
+import { chromium, Browser, Page, BrowserContext } from 'playwright-core';
+import { installSyonetReadOnlyGuard } from './syonet-readonly-guard';
 import {
   normalizeMedia,
   normalizeLeadStatus,
@@ -99,7 +100,9 @@ export async function syonetLogin(config: SyonetRealConfig): Promise<boolean> {
 
     contextInstance = await browserInstance.newContext({
       viewport: { width: 1366, height: 768 },
+      serviceWorkers: 'block',
     });
+    await installSyonetReadOnlyGuard(contextInstance, config.baseUrl);
 
     pageInstance = await contextInstance.newPage();
     pageInstance.setDefaultTimeout(DEFAULT_TIMEOUT);

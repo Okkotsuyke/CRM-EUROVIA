@@ -1,0 +1,63 @@
+name: CRM Eurovia - Gerar DDL Prisma para Neon Staging
+
+on:
+  push:
+    branches: [fix/eurovia-hardening-deploy-20261015]
+    paths:
+      - '.github/workflows/neon-canonical-ddl.yml'
+      - 'apps/api/prisma/schema.prisma'
+      - 'apps/api/prisma/migrations/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  generate:
+    name: Exportar SQL canonico Prisma 5 sem segredos
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      DATABASE_URL: postgresql://ci:ci@127.0.0.1:5432/eurovia_schema_not_connected
+      SYNC_ENABLED: 'false'
+      SYONET_USE_REAL: 'false'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+      - name: Instalar dependencias travadas
+        run: pnpm install --frozen-lockfile
+      - name: Validar schema Prisma canonico
+        run: pnpm --filter @crm/api exec prisma validate --schema prisma/schema.prisma
+      - name: Gerar DDL a partir do schema, sem conexao a banco
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm --filter @crm/api exec prisma migrate diff \
+            --from-empty \
+            --to-schema-datamodel prisma/schema.prisma \
+            --script > eurovia-canonical.sql
+          test -s eurovia-canonical.sql
+          expected=14
+          actual="$(grep -Ec '^CREATE TABLE ' eurovia-canonical.sql)"
+          if [[ "$actual" != "$expected" ]]; then
+            echo "Esperadas 14 tabelas; encontradas $actual"; exit 1
+          fi
+          awk '/^-- CreateEnum/{copy=1}copy' \
+            apps/api/prisma/migrations/20261015_neon_canonical_init/migration.sql \
+            > eurovia-canonical-committed.sql
+          if ! cmp -s eurovia-canonical.sql eurovia-canonical-committed.sql; then
+            echo "MIGRATION DRIFT: versao do Prisma diverge da migration inicial"
+            exit 1
+          fi
+          echo "CANONICAL_DDL_SHA256: $(sha256sum eurovia-canonical.sql | cut -d' ' -f1)"
+          echo "CANONICAL_DDL_TABLES: $actual"
+          echo "CANONICAL_DDL_EXPORT_BEGIN"
+          # Apenas SQL DDL do schema versionado, sem credenciais.
+          base64 -w0 eurovia-canonical.sql | fold -w 128 | sed 's/^/CANONICAL_DDL_CHUNK:/'
+          echo "CANONICAL_DDL_EXPORT_END"

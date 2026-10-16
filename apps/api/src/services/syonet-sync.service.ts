@@ -21,6 +21,7 @@ import {
   LeadData,
   normalizeMedia,
   normalizeLeadStatus,
+  STORE_MAPPING,
   SyncResult
 } from './syonet-client';
 
@@ -32,7 +33,7 @@ const USE_REAL_CLIENT = process.env.SYONET_USE_REAL === 'true';
 export interface SyncOptions {
   fullLoad?: boolean;      // Carga completa (últimos 180 dias)
   incremental?: boolean;   // Carga incremental (desde última sincronização)
-  screens?: ('FUNIL' | 'PRODUTIVIDADE')[];
+  screens?: ('FUNIL' | 'PRODUTIVIDADE' | 'LEADS')[];
 }
 
 export interface SyncSummary {
@@ -204,9 +205,14 @@ async function syncFunilMetrics(batchId: string): Promise<{ processed: number; e
 
     for (const metric of metrics) {
       try {
-        const storeId = await getStoreId(metric.storeName);
+        const syonetId = Number(String(metric.storeId).replace(/^syonet_/, ''));
+        const mappedStore = Number.isInteger(syonetId)
+          ? Object.values(STORE_MAPPING).find(mapping => mapping.syonetId === syonetId)
+          : undefined;
+        const canonicalStoreName = mappedStore?.syonetName ?? metric.storeName;
+        const storeId = await getStoreId(canonicalStoreName);
         if (!storeId) {
-          errors.push(`Loja não encontrada: ${metric.storeName}`);
+          errors.push(`Loja não encontrada no escopo Eurovia: ${canonicalStoreName}`);
           continue;
         }
 
@@ -412,10 +418,23 @@ async function syncLeads(batchId: string, dateRange?: { start: Date; end: Date }
 
   try {
     console.log('📊 Sync: Iniciando sincronização de Leads...');
-    const client = getSyonetClient();
+    let leads: LeadData[];
 
-    // Extrair leads do Syonet
-    const leads = await client.extractLeads(dateRange);
+    if (USE_REAL_CLIENT) {
+      const realClient = getSyonetRealClient();
+      const logged = await realClient.login();
+      if (!logged) {
+        throw new Error('Falha ao autenticar no Syonet');
+      }
+      try {
+        leads = await realClient.extractLeads(dateRange);
+      } finally {
+        await realClient.logout();
+      }
+    } else {
+      const client = getSyonetClient();
+      leads = await client.extractLeads(dateRange);
+    }
 
     for (const lead of leads) {
       try {
@@ -481,11 +500,19 @@ async function syncLeads(batchId: string, dateRange?: { start: Date; end: Date }
  * Executa a sincronização completa
  */
 export async function runSync(options: SyncOptions = {}): Promise<SyncSummary> {
+  // Produção nunca pode cair no cliente mock. O Syonet continua protegido
+  // pelo guard imutável: toda coleta externa é consulta, enquanto as gravações
+  // deste serviço ficam exclusivamente no PostgreSQL do CRM.
+  const isProduction = process.env.NODE_ENV === 'production' || process.env.VERCEL_ENV === 'production';
+  if (!USE_REAL_CLIENT && isProduction) {
+    throw new Error('Syonet: cliente mock proibido em producao');
+  }
   const batchId = generateBatchId();
   const startedAt = new Date();
   const screens: SyncSummary['screens'] = [];
   let totalRowsProcessed = 0;
   let totalErrors = 0;
+  let syncRunId: string | null = null;
 
   console.log(`\n🚀 INICIANDO SINCRONIZAÇÃO - Batch: ${batchId}`);
   console.log(`📅 Data: ${startedAt.toISOString()}`);
@@ -494,7 +521,7 @@ export async function runSync(options: SyncOptions = {}): Promise<SyncSummary> {
 
   try {
     // Registrar início da sincronização
-    const syncRunId = await registerSyncStart(batchId, 'SYONET_API');
+    syncRunId = await registerSyncStart(batchId, 'SYONET_API');
 
     // Sincronizar Funil
     if (!options.screens || options.screens.includes('FUNIL')) {
@@ -552,12 +579,21 @@ export async function runSync(options: SyncOptions = {}): Promise<SyncSummary> {
     console.log(`❌ Total erros: ${totalErrors}`);
 
   } catch (err) {
-    console.error('❌ ERRO NA SINCRONIZAÇÃO:', err);
+    totalErrors += 1;
+    if (syncRunId) {
+      try {
+        await registerSyncEnd(syncRunId, 'FAILED', totalRowsProcessed, 0, 0, totalErrors, 'Falha de sistema durante sincronizacao');
+      } catch {
+        console.error('Falha adicional ao registrar finalizacao de sync no banco Eurovia');
+      }
+    }
+    // Nao registrar payloads, URLs ou cookies de integracao em logs.
+    console.error('Falha no processo de sincronizacao Eurovia');
     screens.push({
       screen: 'SYSTEM',
       success: false,
       rowsProcessed: 0,
-      errors: [String(err)],
+      errors: ['Falha de sistema durante sincronizacao'],
     });
   }
 

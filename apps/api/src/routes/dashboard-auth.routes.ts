@@ -6,9 +6,9 @@
 
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import bcrypt from 'bcryptjs';
-import { PrismaClient } from '@prisma/client';
+import { authenticateDashboard } from '../middleware/auth.middleware';
+import { NeonAccessDenied, neonSignInDashboard, withNeonDashboardPrincipal } from '../services/neon-auth-bridge';
 
-const prisma = new PrismaClient();
 
 interface LoginBody {
   username: string;
@@ -16,6 +16,59 @@ interface LoginBody {
 }
 
 export async function dashboardAuthRoutes(fastify: FastifyInstance) {
+  // Railway production uses the existing SECURITY DEFINER login function under
+  // SET LOCAL ROLE crm_eurovia_runtime, never a privileged Prisma lookup.
+  if (process.env.CRM_NEON_STAGING_MODE === 'true' ||
+      (process.env.CRM_DEPLOY_TARGET === 'railway' &&
+       process.env.CRM_EUROVIA_PRODUCTION_READONLY === 'true')) {
+    fastify.post<{ Body: LoginBody }>('/login', {
+      config: { rateLimit: { max: 5, timeWindow: '1 minute' } },
+    }, async (request, reply) => {
+      const { username, password } = request.body || {};
+      if (!username || !password) return reply.status(400).send({
+        success: false, error: 'Credenciais obrigatorias',
+      });
+      const session = await neonSignInDashboard(fastify.prisma, username, password);
+      if (!session) return reply.status(401).send({
+        success: false, error: 'Credenciais invalidas',
+      });
+      return {
+        success: true,
+        data: {
+          token: fastify.jwt.sign({ id: session.user_id, type: 'dashboard' }, { expiresIn: '30m' }),
+          user: {
+            id: session.user_id, username: session.user_name,
+            name: session.display_name, role: session.user_role,
+          },
+          expiresIn: '30m',
+        },
+      };
+    });
+
+    fastify.get('/me', async (request, reply) => {
+      let claims: unknown;
+      try { claims = await request.jwtVerify(); }
+      catch { return reply.status(401).send({ success: false, error: 'Unauthorized' }); }
+      try {
+        return await withNeonDashboardPrincipal(fastify.prisma, claims, async (_tx, actor) => ({
+          success: true,
+          data: {
+            id: actor.id, username: actor.username, name: actor.name,
+            role: actor.role, allowedStores: actor.allowedStores,
+          },
+        }));
+      } catch (error) {
+        if (error instanceof NeonAccessDenied) return reply.status(401).send({
+          success: false, error: 'Unauthorized',
+        });
+        throw error;
+      }
+    });
+    // Dashboard logout remains unavailable until JWT/session revocation is integrated.
+    return;
+  }
+
+
 
   /**
    * POST /api/v1/dashboard/auth/login
@@ -33,7 +86,7 @@ export async function dashboardAuthRoutes(fastify: FastifyInstance) {
       }
 
       // Buscar usuário no banco
-      const user = await prisma.dashboardUser.findUnique({
+      const user = await fastify.prisma.dashboardUser.findUnique({
         where: { username },
       });
 
@@ -89,51 +142,17 @@ export async function dashboardAuthRoutes(fastify: FastifyInstance) {
 
   /**
    * GET /api/v1/dashboard/auth/me
-   * Retorna informações do usuário logado
+   * Revalida usuario ativo, role e lojas no PostgreSQL (nunca pelo JWT).
    */
-  fastify.get('/me', async (request, reply) => {
-    try {
-      const token = request.headers.authorization?.replace('Bearer ', '');
-      if (!token) {
-        return reply.status(401).send({
-          success: false,
-          error: 'Token não fornecido',
-        });
-      }
-
-      let decoded: any;
-      try {
-        decoded = fastify.jwt.verify(token);
-      } catch {
-        return reply.status(401).send({
-          success: false,
-          error: 'Token inválido ou expirado',
-        });
-      }
-
-      if (decoded.type !== 'dashboard') {
-        return reply.status(401).send({
-          success: false,
-          error: 'Token inválido para dashboard',
-        });
-      }
-
-      return {
-        success: true,
-        data: {
-          id: decoded.id,
-          username: decoded.username,
-          name: decoded.name,
-          role: decoded.role,
-        },
-      };
-    } catch (error) {
-      fastify.log.error(error);
-      return reply.status(500).send({
-        success: false,
-        error: 'Erro ao verificar token',
-      });
-    }
+  fastify.get('/me', { onRequest: authenticateDashboard }, async (request) => {
+    const user = request.dashboardUser;
+    return {
+      success: true,
+      data: {
+        id: user.id, username: user.username, name: user.name,
+        role: user.role, allowedStores: user.allowedStores,
+      },
+    };
   });
 
   /**

@@ -5,24 +5,34 @@
  */
 
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
+import { timingSafeEqual } from 'node:crypto';
 import { runSync, getSyncStatus } from '../services/syonet-sync.service';
 
 /**
  * GET /api/cron/sync
  * Executa sincronização completa (chamado pelo Vercel Cron diariamente)
- * NÃO requer autenticação - verificado pela Vercel via assinatura CRON_SECRET
+ * Exige Authorization: Bearer CRON_SECRET em TODOS os ambientes
  */
+/**
+ * Verifica segredo Vercel com comparacao de tempo constante.
+ * Segredos curtos ou ausentes nunca autorizam execucao.
+ */
+export function isValidCronAuthorization(
+  authorization: string | undefined,
+  secret: string | undefined,
+): boolean {
+  if (!secret || secret.length < 32 || !authorization?.startsWith('Bearer ')) {
+    return false;
+  }
+  const supplied = Buffer.from(authorization.slice('Bearer '.length), 'utf8');
+  const expected = Buffer.from(secret, 'utf8');
+  return supplied.length === expected.length && timingSafeEqual(supplied, expected);
+}
+
 export async function cronRoutes(fastify: FastifyInstance) {
 
-  /**
-   * Verificar se a request veio do Vercel Cron
-   * Vercel Cron adiciona headers específicos nas requisições agendadas
-   */
-  const verifyVercelCron = (request: FastifyRequest): boolean => {
-    const headers = request.headers;
-    // Vercel adiciona este header em requests de cron job
-    return headers['x-vercel-cron'] === '1';
-  };
+  const verifyVercelCron = (request: FastifyRequest): boolean =>
+    isValidCronAuthorization(request.headers.authorization, process.env.CRON_SECRET);
 
   /**
    * GET /api/cron/sync
@@ -41,10 +51,9 @@ export async function cronRoutes(fastify: FastifyInstance) {
     // Verificar se é uma request legítima do Vercel Cron
     const isCronRequest = verifyVercelCron(request);
 
-    // Em produção, apenas executar se vier do Vercel Cron
-    // Em desenvolvimento, permitir execução manual
-    if (process.env.NODE_ENV === 'production' && !isCronRequest) {
-      fastify.log.warn('Tentativa de acesso ao cron sem header do Vercel');
+    // Nunca aceitar x-vercel-cron: 1 como autenticacao.
+    if (!isCronRequest) {
+      fastify.log.warn('Tentativa de acesso ao cron sem autorizacao valida');
       return reply.status(403).send({
         success: false,
         error: 'Forbidden - Cron endpoint',

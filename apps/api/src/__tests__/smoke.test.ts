@@ -46,10 +46,10 @@ afterAll(async () => {
 describe('Health & Cron', () => {
   it('GET /health returns ok or degraded (DB may not be available in test mode)', async () => {
     const res = await app.inject({ method: 'GET', url: '/health' });
-    expect(res.statusCode).toBe(200);
+    // Sem DB, a API NAO esta pronta: rejeita readiness com 503.
+    expect(res.statusCode).toBe(503);
     const body = res.json();
-    // In test mode Prisma plugin is skipped — DB check returns 'degraded'
-    expect(['ok', 'degraded']).toContain(body.status);
+    expect(body.status).toBe('degraded');
   });
 
   it('GET /api/cron/health returns ok with scheduler info', async () => {

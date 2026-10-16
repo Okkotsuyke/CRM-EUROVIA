@@ -6,9 +6,47 @@
 
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { authenticateDashboard } from '../middleware/auth.middleware';
+import { Prisma } from '@prisma/client';
+import { withNeonDashboardPrincipal } from '../services/neon-auth-bridge';
+
+// Railway reads MUST use the exact transaction client that received SET LOCAL
+// ROLE and dashboard_actor_id. A standalone Prisma query bypasses that scope.
+async function evaluatorRead<T>(
+  fastify: FastifyInstance,
+  request: FastifyRequest,
+  read: (client: Prisma.TransactionClient) => Promise<T>,
+): Promise<T> {
+  if (process.env.CRM_DEPLOY_TARGET !== 'railway') return read(fastify.prisma);
+  // request.dashboardUser exists only after successful JWT verification and
+  // revalidation against the active database principal in authenticateDashboard.
+  return withNeonDashboardPrincipal(
+    fastify.prisma,
+    { id: request.dashboardUser.id, type: 'dashboard' },
+    async (tx) => read(tx),
+  );
+}
 
 export async function analyticsRoutes(fastify: FastifyInstance) {
   fastify.addHook('onRequest', authenticateDashboard);
+  // allowedStores sempre vem do banco no middleware. [] nunca significa
+  // acesso global, mesmo para ADMIN do modulo de avaliacao.
+  fastify.addHook('preHandler', async (request, reply) => {
+    if (!request.dashboardUser.allowedStores?.length) {
+      return reply.status(403).send({
+        success: false,
+        error: 'Nenhuma loja autorizada para este avaliador',
+      });
+    }
+    // There are no reconciled Syonet KPI rows in the production Neon DB.
+    // Never present fabricated zeroes as real business indicators.
+    if (process.env.CRM_DEPLOY_TARGET === 'railway' &&
+        process.env.CRM_KPI_RECONCILED !== 'true') {
+      return reply.status(503).send({
+        success: false,
+        error: 'Indicadores reais pendentes de reconciliacao com o Syonet',
+      });
+    }
+  });
 
   /**
    * GET /api/v1/analytics/overview
@@ -21,7 +59,7 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
       const endDate = query.endDate ? new Date(query.endDate) : new Date();
 
       // Query para métricas agregadas usando Prisma raw query
-      const metrics = await fastify.prisma.$queryRaw<any[]>`
+      const metrics = await evaluatorRead(fastify, request, db => db.$queryRaw<any[]>`
         SELECT
           COALESCE(SUM(sm.leads_total), 0) AS total_leads,
           COALESCE(SUM(sm.appointments_total), 0) AS total_appointments,
@@ -31,9 +69,10 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
         FROM sync_metrics sm
         WHERE sm.extraction_date >= ${startDate}
           AND sm.extraction_date <= ${endDate}
+          AND sm.store_id IN (${Prisma.join(request.dashboardUser.allowedStores)})
           AND sm.vl_user_id IS NULL
           AND sm.media_source_id IS NULL
-      `;
+      `);
 
       const data = metrics[0] || {};
       const totalLeads = Number(data.total_leads) || 0;
@@ -73,7 +112,7 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
       const endDate = query.endDate ? new Date(query.endDate) : new Date();
 
       // Query usando Prisma raw query
-      const metrics = await fastify.prisma.$queryRaw<any[]>`
+      const metrics = await evaluatorRead(fastify, request, db => db.$queryRaw<any[]>`
         SELECT
           s.id AS store_id,
           s."shortName" AS store_name,
@@ -86,11 +125,12 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
         JOIN stores s ON sm.store_id = s.id
         WHERE sm.extraction_date >= ${startDate}
           AND sm.extraction_date <= ${endDate}
+          AND sm.store_id IN (${Prisma.join(request.dashboardUser.allowedStores)})
           AND sm.vl_user_id IS NULL
           AND sm.media_source_id IS NULL
         GROUP BY s.id, s."shortName", s.plaza
         ORDER BY s."shortName"
-      `;
+      `);
 
       const result = metrics.map(m => ({
         storeId: m.store_id,
@@ -131,7 +171,7 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
       const startDate = query.startDate ? new Date(query.startDate) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
       const endDate = query.endDate ? new Date(query.endDate) : new Date();
 
-      const metrics = await fastify.prisma.$queryRaw<any[]>`
+      const metrics = await evaluatorRead(fastify, request, db => db.$queryRaw<any[]>`
         SELECT
           u.id AS vl_id,
           u.name AS vl_name,
@@ -147,11 +187,12 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
         JOIN stores s ON sm.store_id = s.id
         WHERE sm.extraction_date >= ${startDate}
           AND sm.extraction_date <= ${endDate}
+          AND sm.store_id IN (${Prisma.join(request.dashboardUser.allowedStores)})
           AND sm.vl_user_id IS NOT NULL
           AND u.role = 'VL_CONSULTANT'
         GROUP BY u.id, u.name, u.username, s."shortName"
         ORDER BY total_leads DESC
-      `;
+      `);
 
       const result = metrics.map(m => ({
         vlId: m.vl_id,
@@ -194,7 +235,7 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
       const startDate = query.startDate ? new Date(query.startDate) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
       const endDate = query.endDate ? new Date(query.endDate) : new Date();
 
-      const metrics = await fastify.prisma.$queryRaw<any[]>`
+      const metrics = await evaluatorRead(fastify, request, db => db.$queryRaw<any[]>`
         SELECT
           ms."normalizedName" AS media_name,
           ms.category,
@@ -204,11 +245,12 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
         JOIN media_sources ms ON sm.media_source_id = ms.id
         WHERE sm.extraction_date >= ${startDate}
           AND sm.extraction_date <= ${endDate}
+          AND sm.store_id IN (${Prisma.join(request.dashboardUser.allowedStores)})
           AND sm.media_source_id IS NOT NULL
           AND sm.vl_user_id IS NULL
         GROUP BY ms."normalizedName", ms.category
         ORDER BY total_leads DESC
-      `;
+      `);
 
       const result = metrics.map(m => ({
         mediaName: m.media_name,
@@ -243,7 +285,7 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
       const days = parseInt(query.days) || 30;
       const startDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 
-      const metrics = await fastify.prisma.$queryRaw<any[]>`
+      const metrics = await evaluatorRead(fastify, request, db => db.$queryRaw<any[]>`
         SELECT
           sm.extraction_date AS date,
           COALESCE(SUM(sm.leads_total), 0)::int AS total_leads,
@@ -252,11 +294,12 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
           COALESCE(SUM(sm.sales_total), 0)::int AS total_sales
         FROM sync_metrics sm
         WHERE sm.extraction_date >= ${startDate}
+          AND sm.store_id IN (${Prisma.join(request.dashboardUser.allowedStores)})
           AND sm.vl_user_id IS NULL
           AND sm.media_source_id IS NULL
         GROUP BY sm.extraction_date
         ORDER BY sm.extraction_date ASC
-      `;
+      `);
 
       return {
         success: true,
@@ -293,8 +336,9 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
       const endOfDay = new Date(date);
       endOfDay.setHours(23, 59, 59, 999);
 
-      const snapshots = await fastify.prisma.productivitySnapshot.findMany({
+      const snapshots = await evaluatorRead(fastify, request, db => db.productivitySnapshot.findMany({
         where: {
+          storeId: { in: request.dashboardUser.allowedStores },
           periodStart: {
             gte: startOfDay,
             lte: endOfDay,
@@ -320,7 +364,7 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
         orderBy: {
           salesCount: 'desc',
         },
-      });
+      }));
 
       // Filtrar apenas VLs
       const vlSnapshots = snapshots.filter(s => s.user.role === 'VL_CONSULTANT');
