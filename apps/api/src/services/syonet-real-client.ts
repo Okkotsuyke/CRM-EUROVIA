@@ -303,18 +303,54 @@ function extractFunnelMetricsRobust(payload: unknown): Partial<Record<FunnelMetr
   return Object.fromEntries(Object.entries(best).map(([field, candidate]) => [field, candidate!.value])) as Partial<Record<FunnelMetricField, number>>;
 }
 
+function collectSyonetApiPaths(payload: unknown): string[] {
+  const found = new Set<string>();
+  const seen = new WeakSet<object>();
+
+  function visit(node: unknown): void {
+    if (node === null || typeof node !== 'object') return;
+    if (seen.has(node as object)) return;
+    seen.add(node as object);
+
+    if (Array.isArray(node)) {
+      node.slice(0, 50).forEach(visit);
+      return;
+    }
+
+    for (const value of Object.values(node as Record<string, unknown>)) {
+      if (typeof value === 'string' && value.includes('/api/')) {
+        try {
+          const url = new URL(value, process.env.SYONET_URL || 'https://viasul.syonet.com');
+          if (url.origin === (new URL(process.env.SYONET_URL || 'https://viasul.syonet.com')).origin) {
+            found.add(url.pathname);
+          }
+        } catch {
+          // Ignore non-URL strings.
+        }
+      } else {
+        visit(value);
+      }
+    }
+  }
+
+  visit(payload);
+  return [...found].slice(0, 30);
+}
+
 function summarizeSyonetPayload(payload: unknown): string {
   const signals = extractFunnelMetricCandidates(payload)
     .sort((a, b) => b.score - a.score)
     .slice(0, 20)
     .map(candidate => candidate.field + '=' + candidate.value + '@' + candidate.path);
+  const apiPaths = collectSyonetApiPaths(payload);
+
   if (payload === null || typeof payload !== 'object') {
-    return JSON.stringify({ rootType: typeof payload, signals });
+    return JSON.stringify({ rootType: typeof payload, signals, apiPaths });
   }
   const root = Array.isArray(payload)
     ? { rootType: 'array', length: payload.length }
     : { rootType: 'object', keys: Object.keys(payload as Record<string, unknown>).slice(0, 60) };
-  return JSON.stringify({ ...root, signals });
+  return JSON.stringify({ ...root, signals, apiPaths });
 }
 
 async function waitForInputs(page: Page, maxAttempts = 60): Promise<number> {
