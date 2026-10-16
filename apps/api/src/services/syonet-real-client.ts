@@ -504,7 +504,17 @@ export async function syonetLogin(config: SyonetRealConfig): Promise<boolean> {
       } catch {}
     };
     page.on('request', (req) => recordApiCall(req.url()));
-    page.on('response', (res) => recordApiCall(res.url(), res.status()));
+    page.on('response', (res) => {
+      recordApiCall(res.url(), res.status());
+      if (res.status() >= 400) {
+        try {
+          const u = new URL(res.url());
+          if (u.origin === new URL(config.baseUrl).origin) {
+            recordBrowserDiagnostic('http-' + res.status(), u.pathname);
+          }
+        } catch {}
+      }
+    });
     page.on('console', (msg) => {
       if (msg.type() === 'error' || msg.type() === 'warning') recordBrowserDiagnostic('console-' + msg.type(), msg.text());
     });
