@@ -481,6 +481,18 @@ export async function syonetLogin(config: SyonetRealConfig): Promise<boolean> {
     const page = await getPage(browser, config.baseUrl);
 
     const observedApiCalls = new Map<string, Set<number>>();
+    const browserDiagnostics: string[] = [];
+    const sanitizeDiagnostic = (value: string) => String(value || '')
+      .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}/gi, '<email>')
+      .replace(/Bearer\\s+[^\\s]+/gi, 'Bearer <redacted>')
+      .replace(/Basic\\s+[^\\s]+/gi, 'Basic <redacted>')
+      .replace(/\\b(?:senha|password|token|cookie|authorization)\\b[^\\n]{0,180}/gi, '<credential-redacted>')
+      .replace(/\\s+/g, ' ')
+      .slice(0, 500);
+    const recordBrowserDiagnostic = (kind: string, value: string) => {
+      const item = kind + ': ' + sanitizeDiagnostic(value);
+      if (!browserDiagnostics.includes(item)) browserDiagnostics.push(item);
+    };
     const recordApiCall = (url: string, status?: number) => {
       try {
         const parsed = new URL(url);
@@ -493,6 +505,11 @@ export async function syonetLogin(config: SyonetRealConfig): Promise<boolean> {
     };
     page.on('request', (req) => recordApiCall(req.url()));
     page.on('response', (res) => recordApiCall(res.url(), res.status()));
+    page.on('console', (msg) => {
+      if (msg.type() === 'error' || msg.type() === 'warning') recordBrowserDiagnostic('console-' + msg.type(), msg.text());
+    });
+    page.on('pageerror', (error) => recordBrowserDiagnostic('pageerror', error.message));
+    page.on('requestfailed', (req) => recordBrowserDiagnostic('requestfailed', req.failure()?.errorText || 'unknown'));
 
     // Ir para página de login
     console.log('📍 Navegando para página de login...');
@@ -569,6 +586,18 @@ export async function syonetLogin(config: SyonetRealConfig): Promise<boolean> {
         });
       }
       console.log('🔎 Syonet context pages after login: ' + JSON.stringify(pageStates));
+      console.log('🔎 Syonet DOM diagnostics after login: ' + JSON.stringify(await page.evaluate(() => ({
+        readyState: document.readyState,
+        bodyTextLength: String(document.body?.innerText || '').length,
+        bodyChildren: Array.from(document.body?.children || []).map((el: Element) => el.tagName.toLowerCase()),
+        scriptSrcs: Array.from(document.scripts).map((s) => s.src).filter(Boolean).slice(0, 20),
+        iframeSrcs: Array.from(document.querySelectorAll('iframe')).map((f) => f.src).filter(Boolean).slice(0, 20),
+        roots: Array.from(document.querySelectorAll('#root,#app,[id="app"],[id="root"]')).map((el: Element) => ({
+          tag: el.tagName.toLowerCase(), id: el.id, childCount: el.children.length,
+          textLength: String((el as HTMLElement).innerText || '').length,
+        })).slice(0, 10),
+      }))));
+      console.log('🔎 Syonet browser diagnostics: ' + JSON.stringify(browserDiagnostics.slice(0, 80)));
     } catch {}
     console.log('🔎 Syonet API calls observadas durante login/dashboard: ' + JSON.stringify(
       [...observedApiCalls.entries()].map(([path, statuses]) => ({ path, statuses: [...statuses] })).slice(0, 300)
