@@ -458,7 +458,7 @@ export async function syonetLogin(config: SyonetRealConfig): Promise<boolean> {
     }
 
     const browser = await getBrowser(config);
-    const page = await getPage(browser, config);
+    const page = await getPage(browser, config.baseUrl);
 
     const observedApiCalls = new Map<string, Set<number>>();
     const recordApiCall = (url: string, status?: number) => {
@@ -1498,20 +1498,3 @@ export function getSyonetRealClient(): {
   logout: () => Promise<void>;
   isAuthenticated: () => boolean;
 } {
-  const config: SyonetRealConfig = {
-    baseUrl: process.env.SYONET_URL || 'https://viasul.syonet.com',
-    username: requireEnv('SYONET_USERNAME'),
-    password: requireEnv('SYONET_PASSWORD'),
-    headless: process.env.SYONET_HEADLESS !== 'false',
-  };
-
-  return {
-    config,
-    login: () => syonetLogin(config),
-    extractFunil: () => extractFunilData(config),
-    extractProductivity: (vlName) => extractProductivityData(config, vlName),
-    extractLeads: (dateRange) => extractLeadsData(config, dateRange),
-    logout: syonetLogout,
-    isAuthenticated: isSyonetAuthenticated,
-  };
-}
