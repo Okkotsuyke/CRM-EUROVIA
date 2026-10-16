@@ -616,6 +616,7 @@ export async function syonetLogin(config: SyonetRealConfig): Promise<boolean> {
                 status: 0,
                 length: 0,
                 terms: {},
+                apiLiterals: [],
                 snippets: ['fetch-error'],
               });
             }
