@@ -375,7 +375,7 @@ function summarizeSyonetPayload(payload: unknown): string {
     for (const key of ['abas', 'filtros', 'componentes', 'widgets', 'dados', 'data', 'configuracao', 'config', 'colunas', 'headers', 'agrupamentos', 'ordenacao', 'opcoes', 'parametros', 'query', 'dataSource']) {
       if (!(key in obj)) continue;
       const raw = obj[key];
-      if ((key === 'config' || key === 'data' || key === 'dados' || key === 'colunas' || key === 'headers' || key === 'agrupamentos' || key === 'ordenacao' || key === 'opcoes' || key === 'parametros') && typeof raw === 'string') {
+      if ((key === 'config' || key === 'data' || key === 'dados' || key === 'colunas' || key === 'headers' || key === 'agrupamentos' || key === 'ordenacao' || key === 'opcoes' || key === 'parametros' || key === 'query' || key === 'dataSource') && typeof raw === 'string') {
         try {
           out[key] = safeStructure(JSON.parse(raw), depth + 1);
         } catch {
