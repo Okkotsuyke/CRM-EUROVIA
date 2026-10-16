@@ -344,13 +344,47 @@ function summarizeSyonetPayload(payload: unknown): string {
     .map(candidate => candidate.field + '=' + candidate.value + '@' + candidate.path);
   const apiPaths = collectSyonetApiPaths(payload);
 
+  const safeKeys = new Set([
+    'id', 'idDashboard', 'idAba', 'idComponente', 'idWidget', 'idKpi',
+    'tipo', 'type', 'nome', 'titulo', 'title', 'path', 'url', '_url',
+    'endpoint', 'method', 'metodo', 'ordem', 'ativo', 'visivel',
+  ]);
+
+  function safeStructure(node: unknown, depth: number): unknown {
+    if (depth > 4 || node === null || typeof node !== 'object') return undefined;
+    if (Array.isArray(node)) {
+      return { arrayLength: node.length, items: node.slice(0, 8).map(item => safeStructure(item, depth + 1)) };
+    }
+    const obj = node as Record<string, unknown>;
+    const out: Record<string, unknown> = { keys: Object.keys(obj).slice(0, 80) };
+    for (const [key, value] of Object.entries(obj)) {
+      if (!safeKeys.has(key)) continue;
+      if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean' || value === null) {
+        if (key === 'url' || key === '_url' || key === 'path' || key === 'endpoint') {
+          try {
+            const u = new URL(String(value), process.env.SYONET_URL || 'https://viasul.syonet.com');
+            out[key] = u.pathname;
+          } catch {
+            out[key] = '<non-url>';
+          }
+        } else {
+          out[key] = value;
+        }
+      }
+    }
+    for (const key of ['abas', 'filtros', 'componentes', 'widgets', 'dados', 'data', 'configuracao']) {
+      if (key in obj) out[key] = safeStructure(obj[key], depth + 1);
+    }
+    return out;
+  }
+
   if (payload === null || typeof payload !== 'object') {
     return JSON.stringify({ rootType: typeof payload, signals, apiPaths });
   }
   const root = Array.isArray(payload)
     ? { rootType: 'array', length: payload.length }
     : { rootType: 'object', keys: Object.keys(payload as Record<string, unknown>).slice(0, 60) };
-  return JSON.stringify({ ...root, signals, apiPaths });
+  return JSON.stringify({ ...root, signals, apiPaths, structure: safeStructure(payload, 0) });
 }
 
 async function waitForInputs(page: Page, maxAttempts = 60): Promise<number> {
