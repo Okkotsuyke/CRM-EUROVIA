@@ -18,7 +18,9 @@ RUN pnpm install --frozen-lockfile --filter '@crm/api...'
 # Browser binaries and native Linux libraries are installed during image build.
 # Playwright's executablePath() always matches its pinned runtime version.
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
-RUN pnpm --filter @crm/api exec playwright install --with-deps chromium
+# Run the playwright-core 1.63 CLI exactly, not the root playwright 1.64 CLI.
+# Mismatched browser revisions can compile but fail when a real sync runs.
+RUN node apps/api/node_modules/playwright-core/cli.js install --with-deps chromium
 RUN pnpm --filter @crm/api run build
 
 RUN chmod -R a+rX /opt/ms-playwright
