@@ -337,6 +337,25 @@ function collectSyonetApiPaths(payload: unknown): string[] {
   return [...found].slice(0, 30);
 }
 
+function summarizeDatasetQuery(value: unknown): unknown {
+  if (typeof value !== 'string') return value && typeof value === 'object' ? { type: 'object', keys: Object.keys(value as object).slice(0, 80) } : { type: typeof value };
+  const raw = value.trim();
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object') {
+      return { type: 'json', structure: summarizeSyonetPayload(parsed) };
+    }
+  } catch {}
+  return {
+    type: 'text',
+    length: raw.length,
+    preview: raw
+      .replace(/(['"])(?:\\\\.|(?!\\1).)*\\1/g, '$1<redacted>$1')
+      .replace(/\\s+/g, ' ')
+      .slice(0, 1800),
+  };
+}
+
 function summarizeSyonetPayload(payload: unknown): string {
   const signals = extractFunnelMetricCandidates(payload)
     .sort((a, b) => b.score - a.score)
@@ -638,8 +657,10 @@ export async function extractFunilData(config: SyonetRealConfig, filters?: {
           for (const candidate of definitionCandidates) {
             try {
               const definition = await apiRequest(page, candidate);
+              const definitionData = definition.data as any;
               console.log('🔎 Syonet dataset definition ' + candidate + ' status=' + definition.status +
                 ' shape=' + summarizeSyonetPayload(definition.data));
+              console.log('🔎 Syonet dataset query ' + candidate + ': ' + JSON.stringify(summarizeDatasetQuery(definitionData?.query)));
             } catch {
               console.log('🔎 Syonet dataset definition ' + candidate + ' erro=consulta');
             }
