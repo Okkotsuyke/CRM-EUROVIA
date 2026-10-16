@@ -786,6 +786,47 @@ type SyonetScreenTarget = {
 
 const SYONET_SCREEN_TARGETS: SyonetScreenTarget[] = [
   {
+    key: 'DASH_VENDAS_189',
+    labels: [
+      '0000. [ VENDAS ] - Incluidos / Agendados / Comparecidos / Vendas',
+      'Incluidos / Agendados / Comparecidos / Vendas',
+    ],
+  },
+  {
+    key: 'FUNIL_VENDAS_244',
+    labels: [
+      'Funil de Vendas',
+    ],
+  },
+  {
+    key: 'ANALISE_LEADS_224',
+    labels: [
+      '0000. [ VENDAS ] - Análise de Leads (colunas dependentes da inclusão)',
+      'Análise de Leads',
+    ],
+  },
+  {
+    key: 'ANALISE_LEADS_PRE_VENDA_374',
+    labels: [
+      '0000. [ VENDAS ] - Análise de Leads Pré-venda',
+      'Análise de Leads Pré-venda',
+    ],
+  },
+  {
+    key: 'AGENDAMENTOS_137',
+    labels: [
+      '000. [ AGENDAMENTOS ] - Relatório Geral de Agendamentos (novo)',
+      'Relatório Geral de Agendamentos (novo)',
+    ],
+  },
+  {
+    key: 'AGENDAMENTOS_141',
+    labels: [
+      '001. [ AGENDAMENTOS ] - Relatório Geral de Agendamentos',
+      'Relatório Geral de Agendamentos',
+    ],
+  },
+  {
     key: 'FUNIL_KPI_FLUXO_DIARIO',
     labels: [
       '[VENDAS] - KPI - Fluxo de Loja - Diário (NOVO)',
@@ -1168,7 +1209,14 @@ async function discoverSyonetScreens(config: SyonetRealConfig, page: Page): Prom
         continue;
       }
 
-      await page.waitForTimeout(12000);
+      await page.waitForTimeout(5000);
+      const filterApplied = await clickUiLabelAcrossFrames(page, ['Aplicar filtros', 'APLICAR FILTROS']);
+      if (filterApplied.clicked) {
+        console.log('🔬 Syonet screen filter applied ' + target.key + ': ' + JSON.stringify(filterApplied));
+        await page.waitForTimeout(20000);
+      } else {
+        await page.waitForTimeout(7000);
+      }
       const screen = await captureScreenDom(page);
       const frames = await captureSyonetFrameInventory(page);
       const apiSummary = [...requests.entries()].map(([path, item]) => ({
