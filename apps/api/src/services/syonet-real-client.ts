@@ -444,6 +444,43 @@ async function discoverDashboardData(
 
   // O /api/dashboard/{id} retorna a configuração do dashboard. A aplicação
   // web pode então executar chamadas adicionais para os datasets/widgets.
+  // Antes de adivinhar endpoints, inspecionamos de forma segura os bundles JS
+  // já carregados pelo próprio Syonet para descobrir as rotas GET reais.
+  try {
+    const scriptSources = await page.evaluate(() =>
+      Array.from(document.scripts)
+        .map(s => (s as HTMLScriptElement).src)
+        .filter(Boolean)
+        .slice(0, 80)
+    );
+    const discoveredApiPaths = new Set<string>();
+    for (const src of scriptSources) {
+      try {
+        const bundleText = await page.evaluate(async (url) => {
+          const res = await fetch(url, { method: 'GET', credentials: 'include' });
+          if (!res.ok) return '';
+          return (await res.text()).slice(0, 2_000_000);
+        }, src);
+        for (const match of bundleText.matchAll(/["'\`]((?:\\/)?api\\/[^"'\`\\s]{2,180})["'\`]/g)) {
+          const candidate = match[1].replace(/^\\//, '/');
+          if (/dashboard|dataset|widget|funil|produtividade|evento|empresa|usuario/i.test(candidate)) {
+            discoveredApiPaths.add(candidate.split('?')[0]);
+          }
+        }
+      } catch {
+        // Bundle indisponível: continuar sem expor conteúdo do JS.
+      }
+      if (discoveredApiPaths.size >= 40) break;
+    }
+    if (discoveredApiPaths.size) {
+      console.log('🔎 Syonet JS API routes descobertas: ' + JSON.stringify([...discoveredApiPaths].slice(0, 40)));
+    } else {
+      console.warn('⚠️ Syonet JS API routes não descobertas nos bundles carregados');
+    }
+  } catch {
+    console.warn('⚠️ Não foi possível inspecionar bundles JS do Syonet');
+  }
+
   // Capturamos somente respostas GET do mesmo host, sem registrar payloads brutos.
   const captured: Array<{ url: string; status: number; data: unknown }> = [];
   const handler = async (response: any) => {
