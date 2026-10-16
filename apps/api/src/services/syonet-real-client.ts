@@ -852,6 +852,7 @@ export async function extractFunilData(config: SyonetRealConfig, filters?: {
             const funilResponse = await apiRequest(page, `/api/funil?${funilParams.toString()}`);
             if (funilResponse.status === 200 && funilResponse.data) {
               const funilData = funilResponse.data;
+              console.log('🔎 Syonet /api/funil response: ' + summarizeSyonetPayload(funilData));
 
               // Extrair métricas do funil
               metric.leadsTotal = parseInt(funilData.leads) || parseInt(funilData.totalLeads) || 0;
