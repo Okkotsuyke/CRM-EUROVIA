@@ -373,7 +373,17 @@ function summarizeSyonetPayload(payload: unknown): string {
       }
     }
     for (const key of ['abas', 'filtros', 'componentes', 'widgets', 'dados', 'data', 'configuracao', 'config']) {
-      if (key in obj) out[key] = safeStructure(obj[key], depth + 1);
+      if (!(key in obj)) continue;
+      const raw = obj[key];
+      if ((key === 'config' || key === 'data' || key === 'dados') && typeof raw === 'string') {
+        try {
+          out[key] = safeStructure(JSON.parse(raw), depth + 1);
+        } catch {
+          out[key] = '<embedded-string>';
+        }
+      } else {
+        out[key] = safeStructure(raw, depth + 1);
+      }
     }
     return out;
   }
