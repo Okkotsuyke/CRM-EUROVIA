@@ -551,7 +551,10 @@ export async function runSync(options: SyncOptions = {}): Promise<SyncSummary> {
 
     // Sincronizar Leads (se full load)
     if (options.fullLoad) {
-      const result = await syncLeads(batchId);
+      const end = new Date();
+      const start = new Date(end);
+      start.setDate(start.getDate() - 30);
+      const result = await syncLeads(batchId, { start, end });
       totalRowsProcessed += result.processed;
       totalErrors += result.errors.length;
       screens.push({
