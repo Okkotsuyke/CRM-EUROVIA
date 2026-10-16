@@ -644,6 +644,14 @@ export async function extractFunilData(config: SyonetRealConfig, filters?: {
         page.off('request', onRequest);
         const uiHints = await page.evaluate(() => {
           const hash = window.location.hash;
+          const resources = performance.getEntriesByType('resource')
+            .map((entry: any) => ({
+              name: String(entry.name),
+              initiatorType: String(entry.initiatorType || ''),
+              duration: Number(entry.duration || 0),
+            }))
+            .filter((entry) => entry.name.includes('/api/'))
+            .slice(-300);
           const links = Array.from(document.querySelectorAll('a,button,[role="link"]'))
             .map((el: any) => ({
               text: String(el.innerText || el.textContent || '').trim().slice(0, 120),
@@ -652,7 +660,7 @@ export async function extractFunilData(config: SyonetRealConfig, filters?: {
             }))
             .filter((x) => /dashboard|painel|kpi/i.test(x.text + ' ' + x.href + ' ' + x.route))
             .slice(0, 100);
-          return { hash, links };
+          return { hash, links, resources };
         });
         console.log('🔎 Syonet UI dashboard hints: ' + JSON.stringify(uiHints));
         console.log('🔎 Syonet UI dashboard requests: ' + JSON.stringify([...observed].slice(0, 200)));
