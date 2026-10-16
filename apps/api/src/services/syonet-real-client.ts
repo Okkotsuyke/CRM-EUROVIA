@@ -505,73 +505,39 @@ export async function syonetLogin(config: SyonetRealConfig): Promise<boolean> {
       lastLoginTime = Date.now();
       console.log('✅ Syonet: Login realizado com sucesso');
       try {
-        const bundleInfo = await page.evaluate(async () => {
-          const origin = location.origin;
-          const scripts = Array.from(document.scripts)
-            .map((s: HTMLScriptElement) => s.src)
-            .filter(Boolean)
-            .slice(0, 12);
-          const apiResources = performance.getEntriesByType('resource')
-            .map((entry: PerformanceEntry) => entry.name)
-            .filter((name: string) => name.startsWith(origin) && name.includes('/api/'))
-            .map((name: string) => {
-              try { return new URL(name).pathname; } catch { return '<invalid>'; }
-            })
-            .slice(0, 100);
-          const routes = new Set<string>();
-          const scriptMeta: Array<Record<string, unknown>> = [];
-          const keywordContexts: Array<Record<string, unknown>> = [];
-          for (const src of scripts) {
-            try {
-              const res = await (page.context() as any).request.get(src);
-              if (!res.ok()) {
-                scriptMeta.push({ src: new URL(src).pathname, status: res.status() });
-                continue;
-              }
-              const source = (await res.text()).slice(0, 6_000_000);
-              const apiMatches = source.match(/(?:\/)?api\/[^"'\s]+/g) || [];
-              for (const match of apiMatches) {
-                const clean = match.replace(/^\//, '').split('?')[0];
-                if (clean.length < 3) routes.add('/' + clean);
-              }
-              scriptMeta.push({
-                src: new URL(src).pathname,
-                status: res.status,
-                length: source.length,
-                apiLiteralCount: apiMatches.length,
-                hasDashboard: /dashboard/i.test(source),
-                hasDataset: /dataset/i.test(source),
-                hasWidget: /widget/i.test(source),
-              });
-              for (const keyword of ['idDataset', 'dataset', 'dashboard', 'executeQuery', 'queryDataset', 'http.post', 'fetch(']) {
-                const i = source.toLowerCase().indexOf(keyword.toLowerCase());
-                if (i >= 0 && keywordContexts.length < 20) {
-                  keywordContexts.push({
-                    keyword,
-                    snippet: source.slice(Math.max(0, i - 120), Math.min(source.length, i + 320))
-                      .replace(/\s+/g, ' ')
-                      .slice(0, 500),
-                  });
-                }
-              }
-            } catch (err) {
-              scriptMeta.push({ src: 'unreadable', error: 'read-failed' });
+        const probePage = await page.context().newPage();
+        const observed = new Set<string>();
+        const onRequest = (req: any) => {
+          try {
+            const url = req.url();
+            if (url.startsWith(config.baseUrl) && url.includes('/api/')) {
+              observed.add(req.method() + ' ' + new URL(url).pathname);
             }
-          }
-          return {
-            url: location.href,
-            scripts: scripts.map((src: string) => { try { return new URL(src).pathname; } catch { return '<invalid>'; } }),
-            apiResources,
-            scriptMeta,
-            bundleRoutes: [...routes].filter((route: string) =>
-              /dashboard|dataset|widget|funil|produtividade|evento|query|execute|relatorio/i.test(route)
-            ).slice(0, 120),
-            keywordContexts,
-          };
-        });
-        console.log('🔎 Syonet portal resources: ' + JSON.stringify(bundleInfo));
+          } catch {}
+        };
+        probePage.on('request', onRequest);
+        const dashboardRoutes = [
+          config.baseUrl + '/portal/appV2/portal/appV2/',
+          config.baseUrl + '/portal/appV2/portal/appV2/index.html',
+          config.baseUrl + '/portal/appV2/portal/appV2/index.html#/dashboard/189',
+          config.baseUrl + '/portal/appV2/portal/appV2/#/dashboard/189',
+        ];
+        for (const route of dashboardRoutes) {
+          try {
+            await probePage.goto(route, { waitUntil: 'domcontentloaded', timeout: LOGIN_TIMEOUT });
+            await probePage.waitForTimeout(15000);
+          } catch {}
+          if ([...observed].some((x) => /dashboard|dataset|widget|query|execute/i.test(x))) break;
+        }
+        const probeUrl = probePage.url();
+        probePage.off('request', onRequest);
+        await probePage.close();
+        console.log('🔎 Syonet dashboard route requests: ' + JSON.stringify({
+          url: probeUrl,
+          requests: [...observed].slice(0, 150),
+        }));
       } catch {
-        console.warn('⚠️ Falha ao inspecionar recursos do portal Syonet');
+        console.warn('⚠️ Falha ao observar rotas do dashboard Syonet');
       }
       return true;
     } else {
