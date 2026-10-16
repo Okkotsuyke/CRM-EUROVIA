@@ -372,7 +372,7 @@ function summarizeSyonetPayload(payload: unknown): string {
         }
       }
     }
-    for (const key of ['abas', 'filtros', 'componentes', 'widgets', 'dados', 'data', 'configuracao', 'config']) {
+    for (const key of ['abas', 'filtros', 'componentes', 'widgets', 'dados', 'data', 'configuracao', 'config', 'colunas', 'headers', 'agrupamentos', 'ordenacao', 'opcoes', 'parametros']) {
       if (!(key in obj)) continue;
       const raw = obj[key];
       if ((key === 'config' || key === 'data' || key === 'dados') && typeof raw === 'string') {
