@@ -563,6 +563,35 @@ export async function extractFunilData(config: SyonetRealConfig, filters?: {
   const metrics: FunilMetrics[] = [];
 
   try {
+    if (process.env.SYONET_DISCOVER_UI === 'true') {
+      try {
+        const observed = new Set<string>();
+        const onRequest = (req: any) => {
+          try {
+            const url = req.url();
+            if (url.startsWith(config.baseUrl) && url.includes('/api/')) {
+              observed.add(req.method() + ' ' + new URL(url).pathname + new URL(url).search);
+            }
+          } catch {}
+        };
+        page.on('request', onRequest);
+        for (const route of [
+          config.baseUrl + '/portal/acessaSistema.do#/dashboard/189',
+          config.baseUrl + '/portal/acessaSistema.do#/dashboard.do?id=189',
+        ]) {
+          try {
+            await page.goto(route, { waitUntil: 'domcontentloaded', timeout: 30000 });
+            await page.waitForTimeout(10000);
+          } catch {}
+          if ([...observed].some((x) => /dataset|query|execute|dashboard/i.test(x))) break;
+        }
+        page.off('request', onRequest);
+        console.log('🔎 Syonet UI dashboard requests: ' + JSON.stringify([...observed].slice(0, 200)));
+      } catch {
+        console.warn('⚠️ Falha ao descobrir chamadas do dashboard pela UI');
+      }
+    }
+
     console.log('📊 Syonet: Extraindo métricas do Funil via API...');
 
     // A lista de empresas deve vir do proprio Syonet. O fallback fixo anterior
