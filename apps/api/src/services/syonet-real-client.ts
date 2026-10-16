@@ -397,6 +397,101 @@ function summarizeSyonetPayload(payload: unknown): string {
   return JSON.stringify({ ...root, signals, apiPaths, structure: safeStructure(payload, 0) });
 }
 
+let dashboardDataDiscoveryDone = false;
+
+type DiscoveredDashboardData = {
+  data: unknown;
+  source: string;
+};
+
+async function discoverDashboardData(
+  page: Page,
+  config: SyonetRealConfig,
+  empresaId: number,
+): Promise<DiscoveredDashboardData | null> {
+  if (dashboardDataDiscoveryDone) return null;
+  dashboardDataDiscoveryDone = true;
+
+  const baseUrl = config.baseUrl;
+  const candidates = [
+    `/api/dataset/664?empresa=${empresaId}`,
+    `/api/dataset/664/data?empresa=${empresaId}`,
+    `/api/dataset/664/dados?empresa=${empresaId}`,
+    `/api/dataset/664/execute?empresa=${empresaId}`,
+    `/api/dashboard/189/data?empresa=${empresaId}`,
+    `/api/dashboard/189/dados?empresa=${empresaId}`,
+    `/api/dashboard/189/dataset/664?empresa=${empresaId}`,
+    `/api/dashboard/189/dataset/664/data?empresa=${empresaId}`,
+    `/api/dashboard/189/widget/1137?empresa=${empresaId}`,
+    `/api/dashboard/189/widgets/1137?empresa=${empresaId}`,
+  ];
+
+  for (const endpoint of candidates) {
+    try {
+      const response = await apiRequest(page, endpoint);
+      if (response.status !== 200 || !response.data) continue;
+      const robust = extractFunnelMetricsRobust(response.data);
+      const hasUsefulMetric = Object.values(robust).some(v => typeof v === 'number' && v > 0);
+      console.log(`🔎 Syonet discovery GET ${endpoint} -> ${response.status}; ${summarizeSyonetPayload(response.data)}`);
+      if (hasUsefulMetric) {
+        console.log(`✅ Syonet discovery encontrou dados em ${endpoint}`);
+        return { data: response.data, source: endpoint };
+      }
+    } catch {
+      // Endpoint inexistente/indisponível: continuar somente com GETs.
+    }
+  }
+
+  // O /api/dashboard/{id} retorna a configuração do dashboard. A aplicação
+  // web pode então executar chamadas adicionais para os datasets/widgets.
+  // Capturamos somente respostas GET do mesmo host, sem registrar payloads brutos.
+  const captured: Array<{ url: string; status: number; data: unknown }> = [];
+  const handler = async (response: any) => {
+    try {
+      if (response.request().method() !== 'GET') return;
+      const url = response.url();
+      if (!url.startsWith(baseUrl) || !url.includes('/api/')) return;
+      if (captured.length >= 40) return;
+      const contentType = response.headers()['content-type'] || '';
+      if (!contentType.includes('json')) return;
+      const data = await response.json();
+      const robust = extractFunnelMetricsRobust(data);
+      if (Object.values(robust).some(v => typeof v === 'number' && v > 0)) {
+        captured.push({ url, status: response.status(), data });
+      }
+    } catch {
+      // Respostas não-JSON ou já consumidas são ignoradas.
+    }
+  };
+
+  page.on('response', handler);
+  try {
+    const routes = [
+      `${baseUrl}/portal/app.do?modulo=dashboard#/dashboard/189`,
+      `${baseUrl}/portal/app.do?modulo=dashboard#/189`,
+    ];
+    for (const route of routes) {
+      try {
+        await page.goto(route, { waitUntil: 'domcontentloaded', timeout: LOGIN_TIMEOUT });
+        await page.waitForTimeout(8000);
+        if (captured.length) break;
+      } catch {
+        // Tentar a próxima rota sem sair do modo somente leitura.
+      }
+    }
+  } finally {
+    page.off('response', handler);
+  }
+
+  for (const item of captured) {
+    console.log(`🔎 Syonet discovery RESPONSE ${item.status} ${new URL(item.url).pathname}; ${summarizeSyonetPayload(item.data)}`);
+    return { data: item.data, source: new URL(item.url).pathname };
+  }
+
+  console.warn('⚠️ Syonet discovery não encontrou payload de dados não-zero no dashboard 189');
+  return null;
+}
+
 async function waitForInputs(page: Page, maxAttempts = 60): Promise<number> {
   let inputCount = 0;
   let attempts = 0;
@@ -602,6 +697,15 @@ export async function extractFunilData(config: SyonetRealConfig, filters?: {
         if (filters?.dataFim) dashboardParams.set('dataFim', filters.dataFim);
         const dashboardUrl = `/api/dashboard/189?${dashboardParams.toString()}`;
         const dashboardResponse = await apiRequest(page, dashboardUrl);
+
+        if (dashboardResponse.status === 200 && empresaId === targetEmpresaIds[0]) {
+          const discovered = await discoverDashboardData(page, config, empresaId);
+          if (discovered?.data) {
+            // Use the discovered live widget/dataset response as the authoritative
+            // read-only source when the dashboard metadata endpoint contains only configuration.
+            (dashboardResponse as any).data = discovered.data;
+          }
+        }
 
         if (dashboardResponse.status !== 200) {
           console.warn(`⚠️ Dashboard 189 retornou status ${dashboardResponse.status} para empresa ${empresaId}`);
@@ -1198,73 +1302,3 @@ export async function extractLeadsData(
 
 /**
     throw error;
-  }
-
-  return leads;
-}
-
-/**
- * Encerra a sessão do Syonet e limpa recursos
- */
-export async function syonetLogout(): Promise<void> {
-  console.log('🔓 Syonet: Encerrando sessão...');
-
-  if (pageInstance && !pageInstance.isClosed()) {
-    await pageInstance.close();
-    pageInstance = null;
-  }
-
-  if (contextInstance) {
-    await contextInstance.close();
-    contextInstance = null;
-  }
-
-  if (browserInstance && browserInstance.isConnected()) {
-    await browserInstance.close();
-    browserInstance = null;
-  }
-
-  isLoggedIn = false;
-  sessionCookies = '';
-  lastLoginTime = 0;
-
-  console.log('🔓 Syonet: Sessão encerrada e recursos limpos');
-}
-
-function requireEnv(name: string): string {
-  const value = process.env[name];
-  if (!value) {
-    throw new Error(`Variável de ambiente ${name} não definida`);
-  }
-  return value;
-}
-
-/**
- * Factory: cria cliente Syonet com configuração do ambiente
- */
-export function getSyonetRealClient(): {
-  config: SyonetRealConfig;
-  login: () => Promise<boolean>;
-  extractFunil: () => Promise<FunilMetrics[]>;
-  extractProductivity: (vlName?: string) => Promise<ProductivityMetrics[]>;
-  extractLeads: (dateRange?: { start: Date; end: Date }) => Promise<LeadData[]>;
-  logout: () => Promise<void>;
-  isAuthenticated: () => boolean;
-} {
-  const config: SyonetRealConfig = {
-    baseUrl: process.env.SYONET_URL || 'https://viasul.syonet.com',
-    username: requireEnv('SYONET_USERNAME'),
-    password: requireEnv('SYONET_PASSWORD'),
-    headless: process.env.SYONET_HEADLESS !== 'false',
-  };
-
-  return {
-    config,
-    login: () => syonetLogin(config),
-    extractFunil: () => extractFunilData(config),
-    extractProductivity: (vlName) => extractProductivityData(config, vlName),
-    extractLeads: (dateRange) => extractLeadsData(config, dateRange),
-    logout: syonetLogout,
-    isAuthenticated: isSyonetAuthenticated,
-  };
-}
