@@ -15,7 +15,7 @@ import type { BrowserContext } from 'playwright-core';
 export type ReadOnlyDecision = { allowed: boolean; reason: string };
 const READ_METHODS = new Set(['GET', 'HEAD']);
 const LOGIN_PATH = '/portal/app.do';
-const DATA_API = /^\/api\/(?:parametro\/[^/]+|pagelogincrm|v2\/recaptchaclientkey|dashboard(?:\/\d+)?|empresa(?:\/\d+)?|usuario(?:\/\d+)?|midia(?:\/\d+)?|funil|produtividade|evento)\/?$/i;
+const DATA_API = /^\/api\/(?:parametro\/[^/]+|pagelogincrm|v2\/recaptchaclientkey|dashboard(?:\/\d+)?(?:\/(?:dados|data|execute|result|resultado|query|valores|widgets))?|dataset\/\d+(?:\/(?:dados|data|execute|result|resultado|query|valores|widgets))?|empresa(?:\/\d+)?|usuario(?:\/\d+)?|midia(?:\/\d+)?|funil|produtividade|evento)\/?$/i;
 const MUTATION = /(?:^|[^a-z])(salvar|gravar|editar|update|insert|create|delete|remove|excluir|apagar|alterar|incluir|cancelar|aprovar|rejeitar|upload|importar|exportar|reset|clear|truncate)(?:$|[^a-z])/i;
 
 export function checkSyonetReadOnlyRequest(
