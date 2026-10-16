@@ -637,25 +637,6 @@ export async function runSync(options: SyncOptions = {}): Promise<SyncSummary> {
       rowsProcessed: 0,
       errors: ['Falha de sistema durante sincronizacao'],
     });
-  }
-
-  } catch (err) {
-    totalErrors += 1;
-    if (syncRunId) {
-      try {
-        await registerSyncEnd(syncRunId, 'FAILED', totalRowsProcessed, 0, 0, totalErrors, 'Falha de sistema durante sincronizacao');
-      } catch {
-        console.error('Falha adicional ao registrar finalizacao de sync no banco Eurovia');
-      }
-    }
-    // Nao registrar payloads, URLs ou cookies de integracao em logs.
-    console.error('Falha no processo de sincronizacao Eurovia');
-    screens.push({
-      screen: 'SYSTEM',
-      success: false,
-      rowsProcessed: 0,
-      errors: ['Falha de sistema durante sincronizacao'],
-    });
   } finally {
     if (USE_REAL_CLIENT) {
       try {
