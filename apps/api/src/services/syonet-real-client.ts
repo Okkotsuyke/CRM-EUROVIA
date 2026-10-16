@@ -351,7 +351,7 @@ function summarizeSyonetPayload(payload: unknown): string {
   ]);
 
   function safeStructure(node: unknown, depth: number): unknown {
-    if (depth > 6 || node === null || typeof node !== 'object') return undefined;
+    if (depth > 9 || node === null || typeof node !== 'object') return undefined;
     if (Array.isArray(node)) {
       return { arrayLength: node.length, items: node.slice(0, 8).map(item => safeStructure(item, depth + 1)) };
     }
