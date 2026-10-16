@@ -529,9 +529,9 @@ export async function syonetLogin(config: SyonetRealConfig): Promise<boolean> {
                 continue;
               }
               const source = (await res.text()).slice(0, 6_000_000);
-              const apiMatches = source.match(/(?:\\/)?api\\/[^"'\\s]+/g) || [];
+              const apiMatches = source.match(/(?:\/)?api\/[^"'\s]+/g) || [];
               for (const match of apiMatches) {
-                const clean = match.replace(/^\\//, '').split('?')[0];
+                const clean = match.replace(/^\//, '').split('?')[0];
                 if (clean.length < 3) routes.add('/' + clean);
               }
               scriptMeta.push({
