@@ -397,141 +397,6 @@ function summarizeSyonetPayload(payload: unknown): string {
   return JSON.stringify({ ...root, signals, apiPaths, structure: safeStructure(payload, 0) });
 }
 
-let dashboardDataDiscoveryDone = false;
-
-type DiscoveredDashboardData = {
-  data: unknown;
-  source: string;
-};
-
-async function discoverDashboardData(
-  page: Page,
-  config: SyonetRealConfig,
-  empresaId: number,
-): Promise<DiscoveredDashboardData | null> {
-  if (dashboardDataDiscoveryDone) return null;
-  dashboardDataDiscoveryDone = true;
-
-  const candidates = [
-    `/api/dataset/664?empresa=${empresaId}`,
-    `/api/dataset/664/data?empresa=${empresaId}`,
-    `/api/dataset/664/dados?empresa=${empresaId}`,
-    `/api/dataset/664/execute?empresa=${empresaId}`,
-    `/api/dashboard/189/data?empresa=${empresaId}`,
-    `/api/dashboard/189/dados?empresa=${empresaId}`,
-    `/api/dashboard/189/dataset/664?empresa=${empresaId}`,
-    `/api/dashboard/189/dataset/664/data?empresa=${empresaId}`,
-    `/api/dashboard/189/widget/1137?empresa=${empresaId}`,
-    `/api/dashboard/189/widgets/1137?empresa=${empresaId}`,
-  ];
-
-  for (const endpoint of candidates) {
-    try {
-      const response = await apiRequest(page, endpoint);
-      console.log(`🔎 Syonet discovery GET ${endpoint} -> ${response.status}`);
-      if (response.status !== 200 || !response.data) continue;
-      const robust = extractFunnelMetricsRobust(response.data);
-      if (Object.values(robust).some(v => typeof v === 'number' && v > 0)) {
-        console.log(`✅ Syonet discovery encontrou dados em ${endpoint}; ${summarizeSyonetPayload(response.data)}`);
-        return { data: response.data, source: endpoint };
-      }
-    } catch {
-      // Endpoint inexistente/indisponível: continuar somente com GETs.
-    }
-  }
-
-  const captured: Array<{ url: string; status: number; data: unknown }> = [];
-  const requestedApiPaths = new Set<string>();
-  const requestHandler = (request: any) => {
-    try {
-      const url = request.url();
-      if (!url.startsWith(config.baseUrl) || !url.includes('/api/')) return;
-      requestedApiPaths.add(request.method() + ' ' + new URL(url).pathname);
-    } catch {
-      // Ignore malformed request metadata.
-    }
-  };
-  page.on('request', requestHandler);
-
-  const handler = async (response: any) => {
-    try {
-      if (response.request().method() !== 'GET') return;
-      const url = response.url();
-      if (!url.startsWith(config.baseUrl) || !url.includes('/api/')) return;
-      if (captured.length >= 40) return;
-      const contentType = response.headers()['content-type'] || '';
-      if (!contentType.includes('json')) return;
-      const data = await response.json();
-      const robust = extractFunnelMetricsRobust(data);
-      if (Object.values(robust).some(v => typeof v === 'number' && v > 0)) {
-        captured.push({ url, status: response.status(), data });
-      }
-    } catch {
-      // Ignorar respostas que não sejam JSON ou já consumidas.
-    }
-  };
-
-  page.on('response', handler);
-  try {
-    // Descobrir a rota real do módulo pelo menu renderizado após o login.
-    const shellInfo = await page.evaluate(() => ({
-      url: location.href,
-      title: document.title,
-      iframes: Array.from(document.querySelectorAll('iframe')).map((x: HTMLIFrameElement) => x.src).filter(Boolean).slice(0, 20),
-      scripts: Array.from(document.scripts).map((x: HTMLScriptElement) => x.src).filter(Boolean).slice(0, 40),
-      links: Array.from(document.querySelectorAll('a')).map((x: HTMLAnchorElement) => ({
-        text: (x.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 100),
-        href: x.href || '',
-      })).filter(x => x.text || x.href).slice(0, 50),
-    }));
-    console.log('🔎 Syonet shell info: ' + JSON.stringify(shellInfo));
-
-    const navTargets = await page.evaluate(() =>
-      Array.from(document.querySelectorAll('a,button'))
-        .map((el: Element) => ({
-          text: (el.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 120),
-          href: (el as HTMLAnchorElement).href || '',
-        }))
-        .filter(x => /dashboard|gestão|gestao|funil|vendas|produtividade/i.test(x.text + ' ' + x.href))
-        .slice(0, 30)
-    );
-    if (navTargets.length) {
-      console.log('🔎 Syonet navigation targets: ' + JSON.stringify(navTargets));
-    }
-
-    const routes = [
-      ...navTargets.map(x => x.href).filter(Boolean),
-      `${config.baseUrl}/portal/app.do?modulo=dashboard#/dashboard/189`,
-      `${config.baseUrl}/portal/app.do?modulo=dashboard#/189`,
-    ];
-    for (const route of routes) {
-      try {
-        await page.goto(route, { waitUntil: 'domcontentloaded', timeout: LOGIN_TIMEOUT });
-        await page.waitForTimeout(8000);
-        if (captured.length) break;
-      } catch {
-        // Tentar a próxima rota.
-      }
-    }
-  } finally {
-    page.off('response', handler);
-    page.off('request', requestHandler);
-  }
-
-  if (requestedApiPaths.size) {
-    console.log('🔎 Syonet API requests observed: ' + JSON.stringify([...requestedApiPaths].slice(0, 80)));
-  }
-
-  if (captured.length) {
-    const item = captured[0];
-    console.log(`🔎 Syonet discovery RESPONSE ${item.status} ${new URL(item.url).pathname}; ${summarizeSyonetPayload(item.data)}`);
-    return { data: item.data, source: new URL(item.url).pathname };
-  }
-
-  console.warn('⚠️ Syonet discovery não encontrou payload de dados não-zero no dashboard 189');
-  return null;
-}
-
 async function waitForInputs(page: Page, maxAttempts = 60): Promise<number> {
   let inputCount = 0;
   let attempts = 0;
@@ -639,6 +504,24 @@ export async function syonetLogin(config: SyonetRealConfig): Promise<boolean> {
       isLoggedIn = true;
       lastLoginTime = Date.now();
       console.log('✅ Syonet: Login realizado com sucesso');
+
+      const shellInfo = await page.evaluate(() => ({
+        url: location.href,
+        title: document.title,
+        iframes: Array.from(document.querySelectorAll('iframe'))
+          .map((x: HTMLIFrameElement) => x.src).filter(Boolean).slice(0, 20),
+        scripts: Array.from(document.scripts)
+          .map((x: HTMLScriptElement) => x.src).filter(Boolean).slice(0, 40),
+        links: Array.from(document.querySelectorAll('a'))
+          .map((x: HTMLAnchorElement) => ({
+            text: (x.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 100),
+            href: x.href || '',
+          }))
+          .filter(x => /dashboard|gestão|gestao|funil|vendas|produtividade/i.test(x.text + ' ' + x.href))
+          .slice(0, 30),
+      }));
+      console.log('🔎 Syonet shell info: ' + JSON.stringify(shellInfo));
+
       return true;
     } else {
       console.error('❌ Syonet: Login falhou - ainda na página de login');
@@ -737,13 +620,6 @@ export async function extractFunilData(config: SyonetRealConfig, filters?: {
         if (filters?.dataFim) dashboardParams.set('dataFim', filters.dataFim);
         const dashboardUrl = `/api/dashboard/189?${dashboardParams.toString()}`;
         const dashboardResponse = await apiRequest(page, dashboardUrl);
-
-        if (dashboardResponse.status === 200 && empresaId === targetEmpresaIds[0]) {
-          const discovered = await discoverDashboardData(page, config, empresaId);
-          if (discovered?.data) {
-            (dashboardResponse as any).data = discovered.data;
-          }
-        }
 
         if (dashboardResponse.status !== 200) {
           console.warn(`⚠️ Dashboard 189 retornou status ${dashboardResponse.status} para empresa ${empresaId}`);
@@ -862,8 +738,6 @@ export async function extractFunilData(config: SyonetRealConfig, filters?: {
             if (filters?.dataInicio) funilParams.set('dataInicio', filters.dataInicio);
             if (filters?.dataFim) funilParams.set('dataFim', filters.dataFim);
             const funilResponse = await apiRequest(page, `/api/funil?${funilParams.toString()}`);
-            console.log('🔎 Syonet /api/funil empresa ' + empresaId + ' status=' + funilResponse.status +
-              ' shape=' + summarizeSyonetPayload(funilResponse.data));
             if (funilResponse.status === 200 && funilResponse.data) {
               const funilData = funilResponse.data;
 
@@ -1272,11 +1146,6 @@ export async function extractLeadsData(
             '/api/evento?idEmpresa=' + empresaId + '&page=' + pageNumber + '&size=' + PAGE_SIZE
           );
 
-          if (pageNumber === 0) {
-            console.log('🔎 Syonet /api/evento empresa ' + empresaId + ' status=' + response.status +
-              ' shape=' + summarizeSyonetPayload(response.data));
-          }
-
           if (response.status !== 200 || !response.data) break;
 
           const items: any[] = Array.isArray(response.data)
@@ -1416,3 +1285,4 @@ export function getSyonetRealClient(): {
     logout: syonetLogout,
     isAuthenticated: isSyonetAuthenticated,
   };
+}
