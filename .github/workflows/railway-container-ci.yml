@@ -32,7 +32,9 @@ jobs:
             test -s /opt/crm/apps/api/dist/src/services/syonet-readonly-guard.js
             node --check /opt/crm/apps/api/dist/src/server.js
             node --check /opt/crm/apps/api/dist/src/services/syonet-real-client.js
-            test -x "$(find /opt/ms-playwright -type f -name chrome -print -quit)"
+            cd /opt/crm/apps/api
+            CHROME_PATH="$(node -e "console.log(require('playwright-core').chromium.executablePath())")"
+            test -x "$CHROME_PATH"
           '
 
   web:
