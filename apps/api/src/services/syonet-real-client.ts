@@ -642,6 +642,19 @@ export async function extractFunilData(config: SyonetRealConfig, filters?: {
           if ([...observed].some((x) => /dataset|query|execute|dashboard/i.test(x))) break;
         }
         page.off('request', onRequest);
+        const uiHints = await page.evaluate(() => {
+          const hash = window.location.hash;
+          const links = Array.from(document.querySelectorAll('a,button,[role="link"]'))
+            .map((el: any) => ({
+              text: String(el.innerText || el.textContent || '').trim().slice(0, 120),
+              href: String(el.getAttribute('href') || '').slice(0, 300),
+              route: String(el.getAttribute('data-route') || el.getAttribute('data-path') || '').slice(0, 300),
+            }))
+            .filter((x) => /dashboard|painel|kpi/i.test(x.text + ' ' + x.href + ' ' + x.route))
+            .slice(0, 100);
+          return { hash, links };
+        });
+        console.log('🔎 Syonet UI dashboard hints: ' + JSON.stringify(uiHints));
         console.log('🔎 Syonet UI dashboard requests: ' + JSON.stringify([...observed].slice(0, 200)));
       } catch {
         console.warn('⚠️ Falha ao descobrir chamadas do dashboard pela UI');
