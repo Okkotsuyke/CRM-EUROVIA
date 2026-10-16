@@ -532,6 +532,31 @@ export async function syonetLogin(config: SyonetRealConfig): Promise<boolean> {
           return [...found].slice(0, 100);
         });
         console.log('🔎 Syonet bundle API routes: ' + JSON.stringify(apiRoutes));
+        const bundleSnippets = await page.evaluate(async () => {
+          const sources = Array.from(document.scripts).map((s: HTMLScriptElement) => s.src).filter(Boolean).slice(0, 10);
+          const out: Record<string, string[]> = {};
+          for (const keyword of ['idDataset', 'dashboard', 'dataset', 'widget', 'execute', 'query']) {
+            const hits: string[] = [];
+            for (const src of sources) {
+              try {
+                const res = await fetch(src, { method: 'GET', credentials: 'include' });
+                if (!res.ok) continue;
+                const text = await res.text();
+                let pos = 0;
+                while (hits.length < 5) {
+                  const i = text.toLowerCase().indexOf(keyword.toLowerCase(), pos);
+                  if (i < 0) break;
+                  hits.push(text.slice(Math.max(0, i - 100), Math.min(text.length, i + 300)));
+                  pos = i + keyword.length;
+                }
+              } catch {}
+              if (hits.length >= 5) break;
+            }
+            out[keyword] = hits;
+          }
+          return out;
+        });
+        console.log('🔎 Syonet bundle keyword snippets: ' + JSON.stringify(bundleSnippets));
       } catch {
         console.warn('⚠️ Não foi possível inspecionar bundle do portal Syonet');
       }
