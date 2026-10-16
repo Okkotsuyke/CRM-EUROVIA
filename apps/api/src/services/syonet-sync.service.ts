@@ -436,16 +436,49 @@ async function syncLeads(batchId: string, dateRange?: { start: Date; end: Date }
       leads = await client.extractLeads(dateRange);
     }
 
-    for (const lead of leads) {
-      try {
-        const storeId = await getStoreId(lead.storeName);
+    const storeCache = new Map<string, Promise<string | null>>();
+    const mediaCache = new Map<string, Promise<string | null>>();
+    const vlCache = new Map<string, Promise<string | null>>();
+    const resolveStoreId = (storeName: string) => {
+      const key = storeName.trim();
+      let promise = storeCache.get(key);
+      if (!promise) {
+        promise = getStoreId(key);
+        storeCache.set(key, promise);
+      }
+      return promise;
+    };
+    const resolveMediaId = (rawName: string) => {
+      const key = rawName.trim();
+      let promise = mediaCache.get(key);
+      if (!promise) {
+        promise = getMediaId(key);
+        mediaCache.set(key, promise);
+      }
+      return promise;
+    };
+    const resolveVlUserId = (username?: string) => {
+      if (!username) return Promise.resolve<string | null>(null);
+      const key = username.trim().toUpperCase();
+      let promise = vlCache.get(key);
+      if (!promise) {
+        promise = getVlUserId(key);
+        vlCache.set(key, promise);
+      }
+      return promise;
+    };
+
+    const BATCH_SIZE = 20;
+    for (let offset = 0; offset < leads.length; offset += BATCH_SIZE) {
+      const batch = leads.slice(offset, offset + BATCH_SIZE);
+      const results = await Promise.allSettled(batch.map(async (lead) => {
+        const storeId = await resolveStoreId(lead.storeName);
         if (!storeId) {
-          errors.push(`Loja não encontrada: ${lead.storeName}`);
-          continue;
+          throw new Error(`Loja não encontrada: ${lead.storeName}`);
         }
 
-        const mediaId = lead.mediaRaw ? await getMediaId(lead.mediaRaw) : null;
-        const vlUserId = lead.assignedVlName ? await getVlUserId(lead.assignedVlName) : null;
+        const mediaId = lead.mediaRaw ? await resolveMediaId(lead.mediaRaw) : null;
+        const vlUserId = await resolveVlUserId(lead.assignedVlName);
 
         await prisma.lead.upsert({
           where: {
@@ -478,13 +511,20 @@ async function syncLeads(batchId: string, dateRange?: { start: Date; end: Date }
             assignedVlId: vlUserId,
           },
         });
+        return true;
+      }));
 
-        processed++;
-      } catch (err) {
-        const msg = `Erro ao processar lead ${lead.id}: ${err}`;
-        errors.push(msg);
-        console.error(msg);
+      for (let i = 0; i < results.length; i++) {
+        const result = results[i];
+        if (result.status === 'fulfilled') {
+          processed++;
+        } else {
+          const msg = `Erro ao processar lead ${batch[i]?.id || 'desconhecido'}: ${result.reason}`;
+          errors.push(msg);
+          console.error(msg);
+        }
       }
+      console.log(`   Sync Leads: lote ${Math.floor(offset / BATCH_SIZE) + 1} concluído (${processed}/${leads.length})`);
     }
 
     console.log(`✅ Sync Leads: ${processed} leads processados`);
