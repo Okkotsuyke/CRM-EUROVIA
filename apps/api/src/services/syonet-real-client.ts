@@ -577,6 +577,12 @@ export async function syonetLogin(config: SyonetRealConfig): Promise<boolean> {
               const response = await page.request.get(src, { timeout: 30000 });
               const text = await response.text();
               const lower = text.toLowerCase();
+              const apiLiterals: string[] = [];
+              let apiIndex = 0;
+              while (apiLiterals.length < 300 && (apiIndex = text.indexOf('/api/', apiIndex)) >= 0) {
+                apiLiterals.push(text.slice(Math.max(0, apiIndex - 80), Math.min(text.length, apiIndex + 220)).replace(/\s+/g, ' '));
+                apiIndex += 5;
+              }
               const terms: Record<string, number> = {};
               for (const term of ['dataset', 'dashboard', 'iddataset', '/api/', 'execute', 'executar', 'consulta', 'query']) {
                 terms[term] = lower.split(term.toLowerCase()).length - 1;
@@ -601,6 +607,7 @@ export async function syonetLogin(config: SyonetRealConfig): Promise<boolean> {
                 status: response.status(),
                 length: text.length,
                 terms,
+                apiLiterals,
                 snippets: snippets.slice(0, 80),
               });
             } catch (error) {
