@@ -793,7 +793,7 @@ async function captureScreenDom(page: Page): Promise<unknown> {
     const headings = Array.from(document.querySelectorAll('h1,h2,h3,h4,[role="heading"]'))
       .filter(visible).map(textOf).filter(Boolean).slice(0, 80);
     const controls = Array.from(document.querySelectorAll(
-      'button,a,[role="button"],[role="tab"],label,input,select'
+      'button,[role="button"],[role="tab"],label,input,select'
     )).filter(visible).map((el) => ({
       tag: el.tagName.toLowerCase(),
       text: textOf(el),
