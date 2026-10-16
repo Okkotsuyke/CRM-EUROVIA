@@ -138,6 +138,12 @@ export async function installSyonetReadOnlyGuard(
     const req = route.request();
     const decision = checkSyonetReadOnlyRequest(req.url(), req.method(), baseUrl);
     if (!decision.allowed) {
+      if (process.env.SYONET_DISCOVER_SCREENS === 'true') {
+        try {
+          const blockedUrl = new URL(req.url());
+          console.log('🔒 Syonet read-only guard blocked: ' + req.method() + ' ' + blockedUrl.pathname + ' reason=' + decision.reason);
+        } catch {}
+      }
       await route.abort('blockedbyclient');
       return;
     }
