@@ -708,6 +708,246 @@ export function isSyonetAuthenticated(): boolean {
   return isSessionValid();
 }
 
+
+type SyonetScreenTarget = {
+  key: string;
+  labels: string[];
+};
+
+const SYONET_SCREEN_TARGETS: SyonetScreenTarget[] = [
+  {
+    key: 'FUNIL_KPI_FLUXO_DIARIO',
+    labels: [
+      '[VENDAS] - KPI - Fluxo de Loja - Diário (NOVO)',
+      'KPI - Fluxo de Loja - Diário',
+      'Fluxo de Loja - Diário',
+    ],
+  },
+  {
+    key: 'DASH_PRODUTIVIDADE_RESULTADO',
+    labels: [
+      '0001 [BDC] - Dash Produtividade Resultado',
+      'Dash Produtividade Resultado',
+      'Produtividade Resultado',
+    ],
+  },
+  {
+    key: 'TRABALHOS_CARTEIRA',
+    labels: ['TRABALHOS CARTEIRA', 'Trabalhos Carteira'],
+  },
+  {
+    key: 'LEAD_X_VENDEDOR_LOJA',
+    labels: ['Lead x Vendedor Loja', 'Lead X Vendedor Loja'],
+  },
+  {
+    key: 'LEADS_X_OPERADOR_BDC_ESPELHADO',
+    labels: ['Leads X Operador BDC Espelhado', 'Leads x Operador BDC Espelhado'],
+  },
+  {
+    key: 'VISITA_AGENDA',
+    labels: ['VISITA AGENDA', 'Visita Agenda'],
+  },
+];
+
+async function clickUiLabel(page: Page, labels: string[]): Promise<{ clicked: boolean; label?: string; text?: string }> {
+  for (const label of labels) {
+    try {
+      const result = await page.evaluate((targetLabel) => {
+        const wanted = targetLabel.replace(/\s+/g, ' ').trim().toLowerCase();
+        const isVisible = (el: Element) => {
+          const style = window.getComputedStyle(el as HTMLElement);
+          const rect = (el as HTMLElement).getBoundingClientRect();
+          return style.visibility !== 'hidden' &&
+            style.display !== 'none' &&
+            rect.width > 0 &&
+            rect.height > 0;
+        };
+        const candidates = Array.from(document.querySelectorAll(
+          'button,a,[role="button"],[role="menuitem"],[role="link"],[role="tab"],li'
+        )).filter(isVisible) as HTMLElement[];
+        const normalized = (el: HTMLElement) =>
+          String(el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
+        const exact = candidates.find((el) => normalized(el) === wanted);
+        const partial = candidates.find((el) => normalized(el).includes(wanted));
+        const target = exact || partial;
+        if (!target) return null;
+        target.scrollIntoView({ block: 'center', inline: 'center' });
+        target.click();
+        return { text: normalized(target).slice(0, 180) };
+      }, label);
+      if (result) return { clicked: true, label, text: result.text };
+    } catch {}
+  }
+  return { clicked: false };
+}
+
+async function captureScreenDom(page: Page): Promise<unknown> {
+  return page.evaluate(() => {
+    const textOf = (el: Element) => String((el as HTMLElement).innerText || el.textContent || '')
+      .replace(/\s+/g, ' ').trim().slice(0, 180);
+    const visible = (el: Element) => {
+      const style = window.getComputedStyle(el as HTMLElement);
+      const rect = (el as HTMLElement).getBoundingClientRect();
+      return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0;
+    };
+    const headings = Array.from(document.querySelectorAll('h1,h2,h3,h4,[role="heading"]'))
+      .filter(visible).map(textOf).filter(Boolean).slice(0, 80);
+    const controls = Array.from(document.querySelectorAll(
+      'button,a,[role="button"],[role="tab"],label,input,select'
+    )).filter(visible).map((el) => ({
+      tag: el.tagName.toLowerCase(),
+      text: textOf(el),
+      aria: String(el.getAttribute('aria-label') || '').slice(0, 120),
+      name: String(el.getAttribute('name') || '').slice(0, 120),
+      type: String(el.getAttribute('type') || '').slice(0, 60),
+    })).filter((x) => x.text || x.aria || x.name).slice(0, 160);
+    const tables = Array.from(document.querySelectorAll('table')).map((table) => ({
+      headers: Array.from(table.querySelectorAll('thead th,[role="columnheader"]'))
+        .map(textOf).filter(Boolean).slice(0, 80),
+      rowCount: table.querySelectorAll('tbody tr,[role="row"]').length,
+    })).slice(0, 40);
+    const selects = Array.from(document.querySelectorAll('select')).map((select) => ({
+      name: String(select.getAttribute('name') || ''),
+      aria: String(select.getAttribute('aria-label') || ''),
+      options: Array.from(select.options).map((option) => textOf(option)).filter(Boolean).slice(0, 100),
+    })).slice(0, 40);
+    return {
+      title: document.title,
+      url: location.href.split('?')[0],
+      hash: location.hash,
+      headings,
+      controls,
+      tables,
+      selects,
+      iframeCount: document.querySelectorAll('iframe').length,
+      scriptCount: document.querySelectorAll('script').length,
+    };
+  });
+}
+
+async function discoverSyonetScreens(config: SyonetRealConfig, page: Page): Promise<void> {
+  if (process.env.SYONET_DISCOVER_SCREENS !== 'true') return;
+
+  console.log('🔬 Syonet screen discovery: INICIANDO (somente leitura)');
+
+  const requests = new Map<string, {
+    methods: Set<string>;
+    statuses: Set<number>;
+    queryKeys: Set<string>;
+    contentTypes: Set<string>;
+    samples: number;
+  }>();
+
+  const recordRequest = (request: any) => {
+    try {
+      const url = new URL(request.url());
+      if (url.origin !== new URL(config.baseUrl).origin || !url.pathname.startsWith('/api/')) return;
+      const path = url.pathname;
+      const current = requests.get(path) || {
+        methods: new Set<string>(),
+        statuses: new Set<number>(),
+        queryKeys: new Set<string>(),
+        contentTypes: new Set<string>(),
+        samples: 0,
+      };
+      current.methods.add(String(request.method() || 'GET').toUpperCase());
+      url.searchParams.forEach((_value, key) => current.queryKeys.add(key));
+      current.samples++;
+      requests.set(path, current);
+    } catch {}
+  };
+
+  const recordResponse = async (response: any) => {
+    try {
+      const url = new URL(response.url());
+      if (url.origin !== new URL(config.baseUrl).origin || !url.pathname.startsWith('/api/')) return;
+      const path = url.pathname;
+      const current = requests.get(path) || {
+        methods: new Set<string>(),
+        statuses: new Set<number>(),
+        queryKeys: new Set<string>(),
+        contentTypes: new Set<string>(),
+        samples: 0,
+      };
+      current.statuses.add(Number(response.status()));
+      const contentType = String(response.headers()['content-type'] || '').split(';')[0];
+      if (contentType) current.contentTypes.add(contentType);
+      if (contentType.includes('json')) {
+        try {
+          const bodyText = await response.text();
+          if (bodyText.length <= 300000) {
+            try {
+              const body = JSON.parse(bodyText);
+              console.log('🔬 Syonet screen response ' + path + ': ' + summarizeSyonetPayload(body));
+            } catch {}
+          }
+        } catch {}
+      }
+      requests.set(path, current);
+    } catch {}
+  };
+
+  page.on('request', recordRequest);
+  page.on('response', recordResponse);
+
+  try {
+    console.log('🔬 Syonet navigation inventory: ' + JSON.stringify(await captureScreenDom(page)));
+
+    for (const target of SYONET_SCREEN_TARGETS) {
+      let clicked = await clickUiLabel(page, target.labels);
+
+      if (!clicked.clicked) {
+        await clickUiLabel(page, ['Gestão', 'GESTÃO']);
+        await page.waitForTimeout(1500);
+        clicked = await clickUiLabel(page, target.labels);
+      }
+
+      if (!clicked.clicked) {
+        await clickUiLabel(page, ['Dashboard', 'DASHBOARD']);
+        await page.waitForTimeout(1000);
+        await clickUiLabel(page, ['Gestão', 'GESTÃO']);
+        await page.waitForTimeout(1500);
+        clicked = await clickUiLabel(page, target.labels);
+      }
+
+      if (!clicked.clicked) {
+        console.log('🔬 Syonet screen NOT_FOUND ' + target.key + ': ' + JSON.stringify({
+          requestedLabels: target.labels,
+          current: await captureScreenDom(page),
+        }));
+        continue;
+      }
+
+      await page.waitForTimeout(12000);
+      const screen = await captureScreenDom(page);
+      const apiSummary = [...requests.entries()].map(([path, item]) => ({
+        path,
+        methods: [...item.methods],
+        statuses: [...item.statuses],
+        queryKeys: [...item.queryKeys],
+        contentTypes: [...item.contentTypes],
+        samples: item.samples,
+      }));
+
+      console.log('🔬 Syonet screen FOUND ' + target.key + ': ' + JSON.stringify({
+        clickedLabel: clicked.label,
+        clickedText: clicked.text,
+        screen,
+        apiSummary,
+      }));
+
+      try {
+        await page.goBack({ waitUntil: 'domcontentloaded', timeout: 20000 });
+        await page.waitForTimeout(2500);
+      } catch {}
+    }
+  } finally {
+    page.off('request', recordRequest);
+    page.off('response', recordResponse);
+    console.log('🔬 Syonet screen discovery: FIM');
+  }
+}
+
 /**
  * Extrai dados da tela de Funil/Gestão (Tela 1)
  *
@@ -779,6 +1019,7 @@ export async function extractFunilData(config: SyonetRealConfig, filters?: {
       }
     }
 
+    await discoverSyonetScreens(config, page);
     console.log('📊 Syonet: Extraindo métricas do Funil via API...');
 
     // A lista de empresas deve vir do proprio Syonet. O fallback fixo anterior
