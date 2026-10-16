@@ -529,9 +529,17 @@ export async function syonetLogin(config: SyonetRealConfig): Promise<boolean> {
             const scripts = [...new Set(entries.map((e) => e.name)
               .filter((name) => name.startsWith(baseUrl) && /\.js(?:[?#]|$)/i.test(name)))].slice(0, 40);
             const findings: Array<{path: string; matches: string[]}> = [];
+            const fetchDiagnostics: Array<{path: string; status: number; length: number; terms: Record<string, number>}> = [];
             for (const src of scripts) {
               try {
-                const text = await fetch(src, { credentials: 'include' }).then((r) => r.text());
+                const response = await fetch(src, { credentials: 'include' });
+                const text = await response.text();
+                const lower = text.toLowerCase();
+                const terms: Record<string, number> = {};
+                for (const term of ['dataset', 'dashboard', 'idDataset', '/api/', 'execute', 'executar', 'consulta', 'query']) {
+                  terms[term] = lower.split(term.toLowerCase()).length - 1;
+                }
+                fetchDiagnostics.push({ path: new URL(src).pathname, status: response.status, length: text.length, terms });
                 const matches: string[] = [];
                 const patterns = [
                   /\/api\/[A-Za-z0-9_?&=\/$.:-]{0,180}/g,
@@ -564,9 +572,10 @@ export async function syonetLogin(config: SyonetRealConfig): Promise<boolean> {
                 }
               } catch {}
             }
-            return { scripts, findings };
+            return { scripts, findings, fetchDiagnostics };
           }, config.baseUrl);
           console.log('🔎 Syonet JS resources: ' + JSON.stringify(bundleInfo.scripts));
+          console.log('🔎 Syonet JS fetch diagnostics: ' + JSON.stringify(bundleInfo.fetchDiagnostics));
           console.log('🔎 Syonet JS API route findings: ' + JSON.stringify(bundleInfo.findings));
         } catch {
           console.warn('⚠️ Falha ao inspecionar bundles JS do Syonet');
