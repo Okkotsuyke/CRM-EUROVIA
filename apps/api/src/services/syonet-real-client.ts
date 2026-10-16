@@ -504,63 +504,6 @@ export async function syonetLogin(config: SyonetRealConfig): Promise<boolean> {
       isLoggedIn = true;
       lastLoginTime = Date.now();
       console.log('✅ Syonet: Login realizado com sucesso');
-
-      // Inspeção somente do bundle público já carregado pelo portal autenticado.
-      // Registramos apenas caminhos de API e nenhum payload/cookie/credencial.
-      try {
-        const apiRoutes = await page.evaluate(async () => {
-          const sources = Array.from(document.scripts)
-            .map((s: HTMLScriptElement) => s.src)
-            .filter(Boolean)
-            .slice(0, 20);
-          const found = new Set<string>();
-          for (const src of sources) {
-            try {
-              const res = await fetch(src, { method: 'GET', credentials: 'include' });
-              if (!res.ok) continue;
-              const text = (await res.text()).slice(0, 4_000_000);
-              const matches = text.match(/\/api\/[A-Za-z0-9_.$?=&%{}:/-]{2,180}/g) || [];
-              for (const route of matches) {
-                if (/dashboard|dataset|widget|funil|produtividade|evento|empresa|usuario/i.test(route)) {
-                  found.add(route.split('?')[0]);
-                }
-              }
-            } catch {
-              // Bundle individual indisponível.
-            }
-          }
-          return [...found].slice(0, 100);
-        });
-        console.log('🔎 Syonet bundle API routes: ' + JSON.stringify(apiRoutes));
-        const bundleSnippets = await page.evaluate(async () => {
-          const sources = Array.from(document.scripts).map((s: HTMLScriptElement) => s.src).filter(Boolean).slice(0, 10);
-          const out: Record<string, string[]> = {};
-          for (const keyword of ['idDataset', 'dashboard', 'dataset', 'widget', 'execute', 'query']) {
-            const hits: string[] = [];
-            for (const src of sources) {
-              try {
-                const res = await fetch(src, { method: 'GET', credentials: 'include' });
-                if (!res.ok) continue;
-                const text = await res.text();
-                let pos = 0;
-                while (hits.length < 5) {
-                  const i = text.toLowerCase().indexOf(keyword.toLowerCase(), pos);
-                  if (i < 0) break;
-                  hits.push(text.slice(Math.max(0, i - 100), Math.min(text.length, i + 300)));
-                  pos = i + keyword.length;
-                }
-              } catch {}
-              if (hits.length >= 5) break;
-            }
-            out[keyword] = hits;
-          }
-          return out;
-        });
-        console.log('🔎 Syonet bundle keyword snippets: ' + JSON.stringify(bundleSnippets));
-      } catch {
-        console.warn('⚠️ Não foi possível inspecionar bundle do portal Syonet');
-      }
-
       return true;
     } else {
       console.error('❌ Syonet: Login falhou - ainda na página de login');
@@ -1180,10 +1123,17 @@ export async function extractLeadsData(
     for (const empresaId of empresaIds) {
       try {
         for (let pageNumber = 0; pageNumber < MAX_PAGES_PER_STORE; pageNumber++) {
-          const response = await apiRequest(
-            page,
-            '/api/evento?idEmpresa=' + empresaId + '&page=' + pageNumber + '&size=' + PAGE_SIZE
-          );
+          const params = new URLSearchParams({
+            idEmpresa: String(empresaId),
+            page: String(pageNumber),
+            size: String(PAGE_SIZE),
+          });
+          if (dateRange) {
+            params.set('dataInicio', dateRange.start.toISOString().slice(0, 10));
+            params.set('dataFim', dateRange.end.toISOString().slice(0, 10));
+          }
+
+          const response = await apiRequest(page, '/api/evento?' + params.toString());
 
           if (response.status !== 200 || !response.data) break;
 
@@ -1194,6 +1144,8 @@ export async function extractLeadsData(
           if (items.length === 0) break;
 
           console.log('   Empresa ' + empresaId + ', pagina ' + pageNumber + ': ' + items.length + ' eventos');
+
+          let pageOldestTime = Number.POSITIVE_INFINITY;
 
           for (const item of items) {
             const resolvedStoreName =
@@ -1228,8 +1180,10 @@ export async function extractLeadsData(
             const mediaNormalized = normalizeMedia(lead.mediaRaw);
             lead.mediaRaw = mediaNormalized.normalized;
 
+            const leadDate = lead.receivedAt.getTime();
+            if (Number.isFinite(leadDate)) pageOldestTime = Math.min(pageOldestTime, leadDate);
+
             if (dateRange) {
-              const leadDate = lead.receivedAt.getTime();
               if (leadDate < dateRange.start.getTime() || leadDate > dateRange.end.getTime()) {
                 continue;
               }
@@ -1239,6 +1193,7 @@ export async function extractLeadsData(
           }
 
           if (items.length < PAGE_SIZE) break;
+          if (dateRange && Number.isFinite(pageOldestTime) && pageOldestTime < dateRange.start.getTime()) break;
         }
       } catch (err) {
         console.warn('Erro ao buscar eventos da empresa ' + empresaId + ':', err);
