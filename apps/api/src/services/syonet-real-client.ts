@@ -555,9 +555,20 @@ export async function syonetLogin(config: SyonetRealConfig): Promise<boolean> {
           const dashboardTarget = page.getByText('Dashboard', { exact: true }).first();
           if (await dashboardTarget.count()) {
             await dashboardTarget.click({ timeout: 5000 }).catch(() => {});
-            await page.waitForTimeout(15000);
+            await page.waitForTimeout(30000);
             console.log('🔎 Syonet dashboard navigation after click: ' + page.url() + ' hash=' + await page.evaluate(() => window.location.hash));
+          } else {
+            await page.waitForTimeout(30000);
           }
+          console.log('🔎 Syonet dashboard DOM state: ' + JSON.stringify(await page.evaluate(() => ({
+            url: location.href,
+            hash: location.hash,
+            bodyChildren: document.body?.children.length || 0,
+            elementCount: document.querySelectorAll('*').length,
+            iframeCount: document.querySelectorAll('iframe').length,
+            scriptCount: document.querySelectorAll('script').length,
+            resourceCount: performance.getEntriesByType('resource').length,
+          }))));
         } catch {
           console.warn('⚠️ Falha ao interagir com navegação Dashboard do Syonet');
         }
