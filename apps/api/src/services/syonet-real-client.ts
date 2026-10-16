@@ -1128,8 +1128,9 @@ async function discoverSyonetScreens(config: SyonetRealConfig, page: Page): Prom
   const recordRequest = (request: any) => {
     try {
       const url = new URL(request.url());
-      if (url.origin !== new URL(config.baseUrl).origin || !url.pathname.startsWith('/api/')) return;
+      if (url.origin !== new URL(config.baseUrl).origin) return;
       const path = url.pathname;
+      const method = String(request.method() || 'GET').toUpperCase();
       const current = requests.get(path) || {
         methods: new Set<string>(),
         statuses: new Set<number>(),
@@ -1137,10 +1138,26 @@ async function discoverSyonetScreens(config: SyonetRealConfig, page: Page): Prom
         contentTypes: new Set<string>(),
         samples: 0,
       };
-      current.methods.add(String(request.method() || 'GET').toUpperCase());
+      current.methods.add(method);
       url.searchParams.forEach((_value, key) => current.queryKeys.add(key));
       current.samples++;
       requests.set(path, current);
+      if (method === 'POST' && path.startsWith('/api/')) {
+        let postData = '';
+        try { postData = String(request.postData() || ''); } catch {}
+        let bodyKeys: string[] = [];
+        try {
+          const parsed = JSON.parse(postData);
+          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) bodyKeys = Object.keys(parsed).slice(0, 80);
+        } catch {
+          bodyKeys = postData ? postData.split('&').map((part: string) => part.split('=')[0]).filter(Boolean).slice(0, 80) : [];
+        }
+        console.log('🔬 Syonet screen POST observed ' + path + ': ' + JSON.stringify({
+          bodyLength: postData.length,
+          bodyKeys,
+          contentType: String(request.headers()['content-type'] || '').split(';')[0],
+        }));
+      }
     } catch {}
   };
 
