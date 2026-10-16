@@ -708,7 +708,16 @@ export async function syonetLogin(config: SyonetRealConfig): Promise<boolean> {
         }
       }
       if (process.env.SYONET_DISCOVER_SCREENS === 'true') {
-        await discoverSyonetScreens(config, page);
+        try {
+          await discoverSyonetDashboardSources(config, page);
+        } catch (error) {
+          console.warn('⚠️ Syonet: descoberta de fontes do dashboard falhou; login continua válido');
+        }
+        try {
+          await discoverSyonetScreens(config, page);
+        } catch (error) {
+          console.warn('⚠️ Syonet: descoberta de telas falhou; login continua válido');
+        }
       }
       console.log('✅ Syonet: Login realizado com sucesso');
       return true;
@@ -847,6 +856,112 @@ async function captureScreenDom(page: Page): Promise<unknown> {
   });
 }
 
+
+function collectNumericIdsByKey(payload: unknown, keyPattern: RegExp, max = 120): number[] {
+  const found = new Set<number>();
+  const seen = new WeakSet<object>();
+
+  function visit(node: unknown): void {
+    if (found.size >= max || node === null || typeof node !== 'object') return;
+    if (seen.has(node as object)) return;
+    seen.add(node as object);
+
+    if (Array.isArray(node)) {
+      for (const item of node.slice(0, 500)) visit(item);
+      return;
+    }
+
+    for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
+      if (keyPattern.test(key)) {
+        const id = typeof value === 'number' ? value : Number(value);
+        if (Number.isInteger(id) && id > 0) found.add(id);
+      }
+      visit(value);
+      if (found.size >= max) break;
+    }
+  }
+
+  visit(payload);
+  return [...found].sort((a, b) => a - b);
+}
+
+async function discoverSyonetDashboardSources(config: SyonetRealConfig, page: Page): Promise<void> {
+  if (process.env.SYONET_DISCOVER_SCREENS !== 'true') return;
+
+  console.log('🔬 Syonet dashboard source discovery: INICIANDO (GET/HEAD somente)');
+
+  const dashboardEndpoints = [
+    '/api/dashboard',
+    '/api/dashboard/189',
+    '/api/dashboard/162',
+    '/api/dashboard/244',
+  ];
+
+  const datasetIds = new Set<number>();
+  const apiPaths = new Set<string>();
+
+  for (const endpoint of dashboardEndpoints) {
+    try {
+      const response = await apiRequest(page, endpoint);
+      console.log('🔬 Syonet dashboard definition ' + endpoint +
+        ' status=' + response.status +
+        ' shape=' + summarizeSyonetPayload(response.data));
+
+      for (const id of collectNumericIdsByKey(response.data, /^idDataset$/i)) datasetIds.add(id);
+      for (const path of collectSyonetApiPaths(response.data)) apiPaths.add(path);
+
+      if (response.data && typeof response.data === 'object') {
+        const data = response.data as any;
+        console.log('🔬 Syonet dashboard query hints ' + endpoint + ': ' + JSON.stringify({
+          query: summarizeDatasetQuery(data.query),
+          dataSource: summarizeDatasetQuery(data.dataSource),
+        }));
+      }
+    } catch (error) {
+      console.log('🔬 Syonet dashboard definition ' + endpoint + ' erro=consulta');
+    }
+  }
+
+  for (const id of datasetIds) {
+    try {
+      const response = await apiRequest(page, '/api/dataset/' + id);
+      console.log('🔬 Syonet dataset definition /api/dataset/' + id +
+        ' status=' + response.status +
+        ' shape=' + summarizeSyonetPayload(response.data));
+
+      const data = response.data as any;
+      if (data && typeof data === 'object') {
+        console.log('🔬 Syonet dataset query /api/dataset/' + id + ': ' +
+          JSON.stringify(summarizeDatasetQuery(data.query)));
+        console.log('🔬 Syonet dataset dataSource /api/dataset/' + id + ': ' +
+          JSON.stringify(summarizeDatasetQuery(data.dataSource)));
+      }
+
+      for (const path of collectSyonetApiPaths(response.data)) apiPaths.add(path);
+    } catch {
+      console.log('🔬 Syonet dataset definition /api/dataset/' + id + ' erro=consulta');
+    }
+  }
+
+  // Consulta apenas as rotas explicitamente reveladas pelas próprias definições.
+  // Não inventamos novos endpoints aqui.
+  for (const path of [...apiPaths].slice(0, 120)) {
+    if (!path.startsWith('/api/')) continue;
+    try {
+      const response = await apiRequest(page, path);
+      console.log('🔬 Syonet discovered API ' + path +
+        ' status=' + response.status +
+        ' shape=' + summarizeSyonetPayload(response.data));
+    } catch {
+      console.log('🔬 Syonet discovered API ' + path + ' erro=consulta');
+    }
+  }
+
+  console.log('🔬 Syonet dashboard source discovery: FIM datasets=' +
+    JSON.stringify([...datasetIds].sort((a, b) => a - b)) +
+    ' apiPaths=' + JSON.stringify([...apiPaths].slice(0, 120)));
+}
+
 async function discoverSyonetScreens(config: SyonetRealConfig, page: Page): Promise<void> {
   if (process.env.SYONET_DISCOVER_SCREENS !== 'true') return;
 
@@ -916,6 +1031,8 @@ async function discoverSyonetScreens(config: SyonetRealConfig, page: Page): Prom
     console.log('🔬 Syonet navigation inventory: ' + JSON.stringify(await captureScreenDom(page)));
 
     for (const target of SYONET_SCREEN_TARGETS) {
+      if (page.isClosed()) break;
+      try {
       let clicked = await clickUiLabel(page, target.labels);
 
       if (!clicked.clicked) {
@@ -958,11 +1075,17 @@ async function discoverSyonetScreens(config: SyonetRealConfig, page: Page): Prom
         apiSummary,
       }));
 
-      try {
-        await page.goBack({ waitUntil: 'domcontentloaded', timeout: 20000 });
-        await page.waitForTimeout(2500);
-      } catch {}
+        try {
+          await page.goBack({ waitUntil: 'domcontentloaded', timeout: 20000 });
+          await page.waitForTimeout(2500);
+        } catch {}
+      } catch (error) {
+        console.log('🔬 Syonet screen ERROR ' + target.key + ': page-state-unavailable');
+        if (page.isClosed()) break;
+      }
     }
+  } catch {
+    console.log('🔬 Syonet screen discovery: erro-global-controlado');
   } finally {
     page.off('request', recordRequest);
     page.off('response', recordResponse);
