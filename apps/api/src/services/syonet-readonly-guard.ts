@@ -36,6 +36,13 @@ export function checkSyonetReadOnlyRequest(
     return { allowed: false, reason: 'https-required' };
   }
   const normalizedMethod = method.toUpperCase();
+  // O shell autenticado do Syonet usa POST em endpoints de contexto de sessão
+  // que apenas carregam a empresa/relacionamento da sessão. Eles não gravam
+  // clientes, leads, eventos ou qualquer dado de negócio; permanecem restritos
+  // a duas rotas explícitas para permitir a montagem somente-leitura das telas.
+  const isApprovedSessionReadPost =
+    normalizedMethod === 'POST' &&
+    /^\/api\/sessao\/(?:empresa|usuario\/empresa)\/?$/i.test(destination.pathname);
   const isApprovedLoginPost =
     normalizedMethod === 'POST' &&
     (
@@ -54,7 +61,7 @@ export function checkSyonetReadOnlyRequest(
       )
     );
 
-  if (!READ_METHODS.has(normalizedMethod) && !isApprovedLoginPost) {
+  if (!READ_METHODS.has(normalizedMethod) && !isApprovedLoginPost && !isApprovedSessionReadPost) {
     return { allowed: false, reason: 'write-method-denied' };
   }
 
@@ -77,6 +84,9 @@ export function checkSyonetReadOnlyRequest(
     }
     if (isApprovedLoginPost) {
       return { allowed: true, reason: 'read-only-login' };
+    }
+    if (isApprovedSessionReadPost) {
+      return { allowed: true, reason: 'read-only-session-context' };
     }
     let decodedPath: string;
     try {
