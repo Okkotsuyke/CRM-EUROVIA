@@ -1187,3 +1187,4 @@ export function getSyonetRealClient(): {
     logout: syonetLogout,
     isAuthenticated: isSyonetAuthenticated,
   };
+}
