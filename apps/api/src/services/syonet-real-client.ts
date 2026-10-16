@@ -345,7 +345,7 @@ function summarizeSyonetPayload(payload: unknown): string {
   const apiPaths = collectSyonetApiPaths(payload);
 
   const safeKeys = new Set([
-    'id', 'idDashboard', 'idAba', 'idComponente', 'idWidget', 'idKpi',
+    'id', 'idDashboard', 'idAba', 'idComponente', 'idWidget', 'idKpi', 'idDataset',
     'tipo', 'type', 'nome', 'titulo', 'title', 'path', 'url', '_url',
     'endpoint', 'method', 'metodo', 'ordem', 'ativo', 'visivel',
   ]);
@@ -372,7 +372,7 @@ function summarizeSyonetPayload(payload: unknown): string {
         }
       }
     }
-    for (const key of ['abas', 'filtros', 'componentes', 'widgets', 'dados', 'data', 'configuracao']) {
+    for (const key of ['abas', 'filtros', 'componentes', 'widgets', 'dados', 'data', 'configuracao', 'config']) {
       if (key in obj) out[key] = safeStructure(obj[key], depth + 1);
     }
     return out;
