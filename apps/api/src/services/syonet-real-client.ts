@@ -177,30 +177,50 @@ async function apiRequest(page: Page, endpoint: string, options: RequestInit = {
   const url = new URL(endpoint, process.env.SYONET_URL || 'https://viasul.syonet.com').href;
   assertSyonetReadOnlyRequest(url, options.method || 'GET', process.env.SYONET_URL || 'https://viasul.syonet.com');
 
-  const response = await page.evaluate(async (args: { url: string; cookie: string; options: RequestInit }) => {
-    const res = await fetch(args.url, {
-      ...args.options,
-      headers: {
-        'Cookie': args.cookie,
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-        ...(args.options.headers || {})
-      }
-    });
+  const timeoutMs = Math.max(5000, Number(process.env.SYONET_API_TIMEOUT_MS || 15000));
 
-    const text = await res.text();
+  const response = await page.evaluate(async (args: {
+    url: string;
+    cookie: string;
+    options: RequestInit;
+    timeoutMs: number;
+  }) => {
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), args.timeoutMs);
     try {
-      return { status: res.status, data: JSON.parse(text) };
-    } catch {
-      return { status: res.status, data: text };
+      const res = await fetch(args.url, {
+        ...args.options,
+        signal: controller.signal,
+        headers: {
+          'Cookie': args.cookie,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          ...(args.options.headers || {})
+        }
+      });
+
+      const text = await res.text();
+      try {
+        return { status: res.status, data: JSON.parse(text) };
+      } catch {
+        return { status: res.status, data: text };
+      }
+    } catch (error) {
+      return {
+        status: 0,
+        data: null,
+        error: error instanceof DOMException && error.name === 'AbortError' ? 'timeout' : 'request-failed',
+      };
+    } finally {
+      window.clearTimeout(timer);
     }
-  }, { url, cookie: cookies, options }) as { status: number; data: unknown };
+  }, { url, cookie: cookies, options, timeoutMs }) as { status: number; data: unknown; error?: string };
 
   if (response.status === 401 || response.status === 403) {
     throw new Error('Não autenticado na API do Syonet');
   }
 
-  return response as { status: number; data: unknown };
+  return response as { status: number; data: unknown; error?: string };
 }
 
 type FunnelMetricField = 'leadsTotal' | 'appointmentsTotal' | 'appointmentsConfirmed' | 'flowTotal' | 'salesTotal';
@@ -807,15 +827,28 @@ export async function extractFunilData(config: SyonetRealConfig, filters?: {
       try {
         console.log(`📍 Processando empresa ID ${empresaId}...`);
 
-        // Chamar o dashboard 189 (Incluidos / Agendados / Comparecidos / Vendas)
-        const dashboardParams = new URLSearchParams({ empresa: String(empresaId) });
-        if (filters?.dataInicio) dashboardParams.set('dataInicio', filters.dataInicio);
-        if (filters?.dataFim) dashboardParams.set('dataFim', filters.dataFim);
-        const dashboardUrl = `/api/dashboard/189?${dashboardParams.toString()}`;
-        const dashboardResponse = await apiRequest(page, dashboardUrl);
+        // O endpoint /api/dashboard/189 é uma definição de dashboard. A tentativa
+        // anterior adicionava filtros na URL e podia ficar pendurada no Syonet.
+        // Primeiro consultamos a fonte direta do funil; só usamos a definição
+        // do dashboard como fallback, sempre em GET.
+        const funilParams = new URLSearchParams({ empresa: String(empresaId) });
+        if (filters?.dataInicio) funilParams.set('dataInicio', filters.dataInicio);
+        if (filters?.dataFim) funilParams.set('dataFim', filters.dataFim);
 
-        if (dashboardResponse.status !== 200) {
-          console.warn(`⚠️ Dashboard 189 retornou status ${dashboardResponse.status} para empresa ${empresaId}`);
+        let dashboardResponse: any = await apiRequest(page, `/api/funil?${funilParams.toString()}`);
+        let directFunnelMetrics = dashboardResponse.status === 200 && dashboardResponse.data
+          ? extractFunnelMetricsRobust(dashboardResponse.data)
+          : {};
+
+        console.log(`🔎 Syonet funil empresa ${empresaId} status=${dashboardResponse.status} shape=${summarizeSyonetPayload(dashboardResponse.data)}`);
+
+        if (Object.keys(directFunnelMetrics).length === 0) {
+          dashboardResponse = await apiRequest(page, '/api/dashboard/189');
+          console.log(`🔎 Syonet dashboard 189 definição status=${dashboardResponse.status} shape=${summarizeSyonetPayload(dashboardResponse.data)}`);
+        }
+
+        if (dashboardResponse.status !== 200 && Object.keys(directFunnelMetrics).length === 0) {
+          console.warn(`⚠️ Fontes do Funil indisponíveis para empresa ${empresaId}: status=${dashboardResponse.status}`);
           continue;
         }
 
@@ -862,17 +895,8 @@ export async function extractFunilData(config: SyonetRealConfig, filters?: {
           const candidates = [
             '/api/dashboard/189/dados',
             '/api/dashboard/189/data',
-            '/api/dashboard/189/execute',
             '/api/dashboard/189/result',
-            '/api/dashboard/189/resultado',
-            '/api/dashboard/189/query',
-            '/api/dashboard/189/valores',
-            '/api/dashboard/189/widgets',
-            '/api/dataset/664/data',
-            '/api/dataset/664/dados',
-            '/api/dataset/664/execute',
-            '/api/dataset/664/result',
-            '/api/dataset/664/query',
+            '/api/funil',
           ];
           for (const candidate of candidates) {
             for (const variant of queryVariants) {
@@ -911,7 +935,10 @@ export async function extractFunilData(config: SyonetRealConfig, filters?: {
           }
 
           // Extração robusta para respostas aninhadas/wrappers do Syonet.
-          const robust = extractFunnelMetricsRobust(data);
+          const robust = {
+            ...directFunnelMetrics,
+            ...extractFunnelMetricsRobust(data),
+          };
           if (robust.leadsTotal !== undefined) metric.leadsTotal = robust.leadsTotal;
           if (robust.appointmentsTotal !== undefined) metric.appointmentsTotal = robust.appointmentsTotal;
           if (robust.appointmentsConfirmed !== undefined) metric.appointmentsConfirmed = robust.appointmentsConfirmed;
@@ -1413,7 +1440,6 @@ export async function extractLeadsData(
             idEmpresa: String(empresaId),
             page: String(pageNumber),
             size: String(PAGE_SIZE),
-            sort: 'dataInc,desc',
           });
           if (dateRange) {
             params.set('dataInicio', dateRange.start.toISOString().slice(0, 10));
